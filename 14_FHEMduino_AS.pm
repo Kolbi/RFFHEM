@@ -22,7 +22,7 @@ FHEMduino_AS_Initialize($)
   my ($hash) = @_;
 
   #FHEM Schnittstelle:
-  #    ASTTIIDDDDDD
+  #    ASTTIIDDDDCC
   # AS  - Arduino Sensor
   # TT  - Bit 0..6 type
   #	- Bit 7 trigger (0 auto, 1 manual)
@@ -30,6 +30,7 @@ FHEMduino_AS_Initialize($)
   #	- Bit 6,7 battery status (00 - bad, 01 - change, 10 - ok, 11 - optimal)
   # DD1 - LowByte
   # DD2 - HighByte
+  # CC  -  Dallas (now Maxim) iButton 8-bit CRC calculation
   #-----------------------------
   # T	Type:
   # 0
@@ -42,7 +43,7 @@ FHEMduino_AS_Initialize($)
   # 7	reed gas
   # 8    voltage
   # ..31 
- $hash->{Match}     = "AS.*\$";
+  $hash->{Match}     = "AS.*\$";
   $hash->{DefFn}     = "FHEMduino_AS_Define";
   $hash->{UndefFn}   = "FHEMduino_AS_Undef";
   $hash->{AttrFn}    = "FHEMduino_AS_Attr";
@@ -96,7 +97,30 @@ FHEMduino_AS_Parse($$)
     Log3 "FHEMduino", 4, "FHEMduino_AS: wrong message -> $msg";
     return "";
   }
+  ### CRC Check only if more than 10 characters for backward compatibility ###
+  if (length($msg) > 10) {
+	my $i;
+	my $crc = 0x0;
+	my $byte;
+	
+    for ($i = 2; $i <= 8; $i+=2) {
+      #convert pairs of hex digits into number for Bytes 0-3 only!
+      $byte = hex(substr $msg, $i, 2);
+      $crc=FHEMduino_AS_crc($crc,$byte);
+	}
+	my $crc8;
+	$crc8 = substr($msg,-2);  ## Get last two Ascii Chars for CRC Validation
 
+	if ($crc != hex($crc8)) {
+	  Log3 $hash, 4, "FHEMduino_AS: CRC ($crc) does not not match $msg, should be CRC ($crc8)";
+  	  Log3 "FHEMduino", 4, "FHEMduino_AS: CRC ($crc) does not not match $msg, should be CRC ($crc8)";
+
+	  return "FHEMduino_AS: CRC ($crc) does not not match $msg, should be CRC ($crc8)";
+	  
+	}
+  }
+
+  
   Log3 $hash, 4, "FHEMduino_AS: $msg";
   
   my ($deviceCode, $SensorTyp, $model, $id, $valHigh, $valLow, $Sigval, $bat, $trigger, $val, $sigType);
@@ -127,7 +151,7 @@ FHEMduino_AS_Parse($$)
   # DD2 - HighByte
   
 	$SensorTyp = "ArduinoSensor";
-    	$model = $typeStr{hex(substr($msg,2,2)) &0x7f}; # Sensortype
+   	$model = $typeStr{hex(substr($msg,2,2)) &0x7f}; # Sensortype
 	$sigType = $sigStr{hex(substr($msg,2,2)) &0x7f}; # Signaltype
 	$id = hex(substr($msg,4,2)) &0x3f;
 	$valLow = hex(substr($msg,6,2));
@@ -223,6 +247,28 @@ FHEMduino_AS_Attr(@)
   delete($modules{FHEMduino_AS}{defptr}{$cde});
   $modules{FHEMduino_AS}{defptr}{$iohash->{NAME} . "." . $cde} = $hash;
   return undef;
+}
+
+#Optimized Dallas (now Maxim) iButton 8-bit CRC calculation.
+#Polynomial: x^8 + x^5 + x^4 + 1 (0x8C)
+#Initial value: 0x0
+#See http://www.maxim-ic.com/appnotes.cfm/appnote_number/27
+
+sub FHEMduino_AS_crc($$)
+{
+  my ($lcrc,$ldata) = @_;
+  my $i;
+  $lcrc = $lcrc ^ $ldata;
+  for ($i = 0; $i < 8; $i++)
+  {
+    if ($lcrc & 0x01)
+    {
+      $lcrc = ($lcrc >> 1) ^ 0x8C;
+    } else {
+      $lcrc >>= 1;
+    }
+  }
+  return $lcrc;
 }
 
 1;
