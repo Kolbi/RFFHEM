@@ -1,7 +1,7 @@
-# $Id: 00_SIGNALduino.pm 10488 2018-09-19 11:00:00Z v3.3.3-dev $
+# $Id: 00_SIGNALduino.pm 10488 2018-10-23 00:22:00Z v3.3.3-dev $
 #
 # v3.3.3 (Development release 3.3)
-# The module is inspired by the FHEMduino project and modified in serval ways for processing the incomming messages
+# The module is inspired by the FHEMduino project and modified in serval ways for processing the incoming messages
 # see http://www.fhemwiki.de/wiki/SIGNALDuino
 # It was modified also to provide support for raw message handling which can be send from the SIGNALduino
 # The purpos is to use it as addition to the SIGNALduino which runs on an arduno nano or arduino uno.
@@ -10,22 +10,25 @@
 # S.Butzek,Ralf9 2016-2018
 
 package main;
+my $missingModulSIGNALduino="";
 
 use strict;
 use warnings;
-use Time::HiRes qw(gettimeofday);
-use Data::Dumper qw(Dumper);
-use Scalar::Util qw(looks_like_number);
 no warnings 'portable';
 
-#$| = 1;		#Puffern abschalten, Hilfreich für PEARL WARNINGS Search
+eval "use Data::Dumper qw(Dumper);1";
+eval "use JSON;1" or $missingModulSIGNALduino .= "JSON ";
+eval "use Scalar::Util qw(looks_like_number);1";
+eval "use Time::HiRes qw(gettimeofday);1" ;
+
+#$| = 1;		#Puffern abschalten, Hilfreich fuer PEARL WARNINGS Search
 
 #use POSIX qw( floor);  # can be removed
 #use Math::Round qw();
 
 
 use constant {
-	SDUINO_VERSION            => "v3.3.3-dev_15.09.",
+	SDUINO_VERSION            => "v3.3.3-dev_12.11.",
 	SDUINO_INIT_WAIT_XQ       => 1.5,       # wait disable device
 	SDUINO_INIT_WAIT          => 2,
 	SDUINO_INIT_MAXRETRY      => 3,
@@ -37,7 +40,8 @@ use constant {
 	
 	SDUINO_DISPATCH_VERBOSE     => 5,      # default 5
 	SDUINO_MC_DISPATCH_VERBOSE  => 5,      # wenn kleiner 5, z.B. 3 dann wird vor dem dispatch mit loglevel 3 die ID und rmsg ausgegeben
-	SDUINO_MC_DISPATCH_LOG_ID   => '12.1'  # die o.g. Ausgabe erfolgt nur wenn der Wert mit der ID übereinstimmt
+	SDUINO_MC_DISPATCH_LOG_ID   => '12.1', # die o.g. Ausgabe erfolgt nur wenn der Wert mit der ID uebereinstimmt
+	SDUINO_PARSE_DEFAULT_LENGHT_MIN => 8
 };
 
 
@@ -72,6 +76,7 @@ my %gets = (    # Name, Data to send to the SIGNALduino, Regexp for the answer
 #  "FAParms"  => ["fp", '.*' ],
 #  "TCParms"  => ["dp", '.*' ],
 #  "HXParms"  => ["hp", '.*' ]
+  "availableFirmware" => ["none",'none'],
 );
 
 
@@ -132,12 +137,13 @@ my $clientsSIGNALduino = ":IT:"
 						."RFXX10REC:"
 						."Dooya:"
 						."SOMFY:"
-						."SD_UT:"	## BELL 201.2 TXA
+						."SD_BELL:"	## bells
+						."SD_UT:"	## universal - more devices with different protocols
 			        	."SD_WS_Maverick:"
 			        	."FLAMINGO:"
 			        	."CUL_WS:"
 			        	."Revolt:"
-					." :"		# Zeilenumbruch
+						." :"		# Zeilenumbruch
 			        	."FS10:"
 			        	."CUL_FHTTK:"
 			        	."Siro:"
@@ -165,8 +171,8 @@ my %matchListSIGNALduino = (
      "14:Dooya"					=> '^P16#[A-Fa-f0-9]+',
      "15:SOMFY"					=> '^Ys[0-9A-F]+',
      "16:SD_WS_Maverick"		=> '^P47#[A-Fa-f0-9]+',
-     "17:SD_UT"            		=> '^[P|u](30|79|81|83)#.*',	 # universal - more devices with different protocols
-     "18:FLAMINGO"            	=> '^P13#[A-Fa-f0-9]+',						## Flamingo Smoke
+     "17:SD_UT"            		=> '^P(?:29|30|34|69|81|83|86)#.*',	 # universal - more devices with different protocols
+     "18:FLAMINGO"            	=> '^P13\.?1?#[A-Fa-f0-9]+',     # Flamingo Smoke
      "19:CUL_WS"				=> '^K[A-Fa-f0-9]{5,}',
      "20:Revolt"				=> '^r[A-Fa-f0-9]{22}',
      "21:FS10"					=> '^P61#[A-F0-9]+',
@@ -175,6 +181,7 @@ my %matchListSIGNALduino = (
      "24:FS20"    				=> "^81..(04|0c)..0101a001", 
      "25:CUL_EM"    				=> "^E0.................", 
      "26:Fernotron"  			=> '^P82#.*',
+     "27:SD_BELL"  			    => '^P(?:14|15|32|41|57|79)#.*',
 	 "X:SIGNALduino_un"			=> '^[u]\d+#.*',
 );
 
@@ -209,6 +216,7 @@ SIGNALduino_Initialize($)
                       ." initCommands"
                       ." flashCommand"
   					  ." hardware:ESP_1M,ESP32,nano,nanoCC1101,miniculCC1101,promini,radinoCC1101"
+					  ." updateChannelFW:stable,testing"
 					  ." debug:0,1"
 					  ." longids"
 					  ." minsecs"
@@ -223,6 +231,7 @@ SIGNALduino_Initialize($)
 					  ." development"
 					  ." noMsgVerbose:0,1,2,3,4,5"
 					  ." eventlogging:0,1"
+					  ." maxMuMsgRepeat"
 		              ." $readingFnAttributes";
 
   $hash->{ShutdownFn} = "SIGNALduino_Shutdown";
@@ -304,7 +313,7 @@ SIGNALduino_Define($$)
   
   my $dev = $a[2];
   #Debug "dev: $dev" if ($debug);
-  #my $hardware=AttrVal($name,"hardware","nano328");
+  #my $hardware=AttrVal($name,"hardware","nano");
   #Debug "hardware: $hardware" if ($debug);
  
  
@@ -339,8 +348,12 @@ SIGNALduino_Define($$)
   $hash->{LASTDMSG} = "nothing";
   $hash->{TIME}=time();
   $hash->{versionmodul} = SDUINO_VERSION;
-  
+  #notifyRegexpChanged($hash,"^$name$:^opened\$");  # Auf das Event opened der eigenen Definition reagieren
+  #notifyRegexpChanged($hash,"sduino:opened");  # Auf das Event opened der eigenen Definition reagieren
+  #$hash->{NOTIFYDEV}="$name";
   Log3 $name, 3, "$name: Firmwareversion: ".$hash->{READINGS}{version}{VAL}  if ($hash->{READINGS}{version}{VAL});
+
+
 
   return $ret;
 }
@@ -418,14 +431,23 @@ SIGNALduino_Set($@)
        $CC1101Frequency = $hash->{cc1101_frequency};
     }
   }
-  if (!defined($sets{$a[1]})) {
+  my %my_sets = %sets;
+  #SIGNALduino_Log3 $hash, 3, "SIGNALduino_Set addionals set commands: ".Dumper(%{$hash->{additionalSets}});
+  #SIGNALduino_Log3 $hash, 3, "SIGNALduino_Set normal set commands: ".Dumper(%my_sets);
+  #SIGNALduino_Log3 $hash, 3, "SIGNALduino_Set global set commands: ".Dumper(%sets);
+
+  %my_sets = ( %my_sets,  %{$hash->{additionalSets}} ) if ( defined($hash->{additionalSets}) );
+  
+  
+    
+  if (!defined($my_sets{$a[1]})) {
     my $arguments = ' ';
-    foreach my $arg (sort keys %sets) {
+    foreach my $arg (sort keys %my_sets) {
       next if ($arg =~ m/cc1101/ && $hasCC1101 == 0);
       if ($arg =~ m/patable/) {
         next if (substr($arg, -3) ne $CC1101Frequency);
       }
-      $arguments.= $arg . ($sets{$arg} ? (':' . $sets{$arg}) : '') . ' ';
+      $arguments.= $arg . ($my_sets{$arg} ? (':' . $my_sets{$arg}) : '') . ' ';
     }
     #SIGNALduino_Log3 $hash, 3, "set arg = $arguments";
     return "Unknown argument $a[1], choose one of " . $arguments;
@@ -459,11 +481,37 @@ SIGNALduino_Set($@)
 	my $baudrate=$hardware eq "uno" ? 115200 : 57600;
     my $defaultHexFile = "./FHEM/firmware/$hash->{TYPE}_$hardware.hex";
     my $logFile = AttrVal("global", "logdir", "./log/") . "$hash->{TYPE}-Flash.log";
-
-	return "Please define your hardware! (attr $name hardware <model of your receiver>) " if ($hardware eq "");
+    return "Please define your hardware! (attr $name hardware <model of your receiver>) " if ($hardware eq "");
 	return "ERROR: argument failed! flash [hexFile|url]" if (!$args[0]);
-	
-    if(!$arg || $args[0] !~ m/^(\w|\/|.)+$/) {
+
+    #SIGNALduino_Log3 $hash, 3, "SIGNALduino_Set choosen flash option: $args[0] of available: ".Dumper($my_sets{flash});
+    
+	if( grep $args[0] eq $_ , split(",",$my_sets{flash}) )
+	{
+		SIGNALduino_Log3 $hash, 3, "SIGNALduino_Set flash $args[0] try to fetch github assets for tag $args[0]";
+
+		my $ghurl = "https://api.github.com/repos/RFD-FHEM/<REPONAME>/releases/tags/$args[0]";
+		if ($hardware =~ /ESP/) {
+			$ghurl =~ s/<REPONAME>/SIGNALESP/ ;
+		} else {
+			$ghurl =~ s/<REPONAME>/SIGNALDuino/ ; 
+		}
+		SIGNALduino_Log3 $hash, 3, "SIGNALduino_Set flash $args[0] try to fetch release $ghurl";
+		
+	    my $http_param = {
+                    url        => $ghurl,
+                    timeout    => 5,
+                    hash       => $hash,                                                                                 # Muss gesetzt werden, damit die Callback funktion wieder $hash hat
+                    method     => "GET",                                                                                 # Lesen von Inhalten
+                    header     => "User-Agent: perl_fhem\r\nAccept: application/json",  								 # Den Header gemaess abzufragender Daten aendern
+                    callback   =>  \&SIGNALduino_githubParseHttpResponse,                                                # Diese Funktion soll das Ergebnis dieser HTTP Anfrage bearbeiten
+                    command    => "getReleaseByTag"
+                    
+                };
+   		HttpUtils_NonblockingGet($http_param);                                                                                     # Starten der HTTP Abfrage. Es gibt keinen Return-Code. 
+		return;
+	} 
+    elsif(!$arg || $args[0] !~ m/^(\w|\/|.)+$/) {
       $hexFile = AttrVal($name, "hexFile", "");
       if ($hexFile eq "") {
         $hexFile = $defaultHexFile;
@@ -498,7 +546,7 @@ SIGNALduino_Set($@)
 			SIGNALduino_Log3 $name, 5, "$hash->{TYPE} $name: flashCommand are not defined. standard used to flash.";
 		if ($hardware eq "radinoCC1101") {																	# radinoCC1101 Port not /dev/ttyUSB0 --> /dev/ttyACM0
 			$flashCommand = "avrdude -c avr109 -b [BAUDRATE] -P [PORT] -p atmega32u4 -vv -D -U flash:w:[HEXFILE] 2>[LOGFILE]";
-		} elsif ($hardware ne "radinoCC1101" && $hardware ne "ESP_1M" && $hardware ne "ESP32") {			# nano, nanoCC1101, miniculCC1101, promini
+		} elsif ($hardware ne "ESP_1M" && $hardware ne "ESP32" && $hardware ne "radinoCC1101") {			# nano, nanoCC1101, miniculCC1101, promini
 			$flashCommand = "avrdude -c arduino -b [BAUDRATE] -P [PORT] -p atmega328p -vv -U flash:w:[HEXFILE] 2>[LOGFILE]";
 		}
 	} else {
@@ -676,8 +724,8 @@ SIGNALduino_Set($@)
 
 		$sendData = $intro . "SM;" . ($repeats > 0 ? "R=$repeats;" : "") . "C=$clock;D=$data;" . $outro . $frequency; #	SM;R=2;C=400;D=AFAFAF;
 		SIGNALduino_Log3 $name, 5, "$name: sendmsg Preparing manchester protocol=$protocol, repeats=$repeats, clock=$clock data=$data";
-		
-	} else {
+
+} else {
 		if ($protocol == 3 || substr($data,0,2) eq "is") {
 			if (substr($data,0,2) eq "is") {
 				$data = substr($data,2);   # is am Anfang entfernen
@@ -740,7 +788,6 @@ SIGNALduino_Set($@)
 	#SIGNALduino_SimpleWrite($hash, $sendData);
 	SIGNALduino_AddSendQueue($hash,$sendData);
 	SIGNALduino_Log3 $name, 4, "$name/set: sending via SendMsg: $sendData";
-	
   } else {
   	SIGNALduino_Log3 $name, 5, "$name/set: set $name $cmd $arg";
 	#SIGNALduino_SimpleWrite($hash, $arg);
@@ -776,6 +823,21 @@ SIGNALduino_Get($@)
   
   my ($msg, $err);
 
+  if ($a[1] eq "availableFirmware") {
+  	
+  	if ($missingModulSIGNALduino =~ m/JSON/ )
+  	{
+  		SIGNALduino_Log3 $name, 1, "$name: get $a[1] failed. Pleas install Perl module JSON. Example: sudo apt-get install libjson-perl";
+  		
+ 		return "$a[1]: \n\nFetching from github is not possible. Please install JSON. Example:<br><code>sudo apt-get install libjson-perl</code>";
+  	} 
+  	
+  	my $channel=AttrVal($name,"updateChannelFW","stable");
+	my $hardware=AttrVal($name,"hardware","nano");
+  	SIGNALduino_querygithubreleases($hash);
+	return "$a[1]: \n\nFetching $channel firmware versions for $hardware from github\n";
+  }
+  
   if (IsDummy($name))
   {
   	if ($arg =~ /^M[CcSU];.*/)
@@ -922,8 +984,7 @@ SIGNALduino_Get($@)
 	
 	return "$a[1]: \n\n$ret\n";
 	#return "$a[1]: \n\n$ret\nIds with modules: $moduleId";
-  }
-  
+  }  
 
   #SIGNALduino_SimpleWrite($hash, $gets{$a[1]}[0] . $arg);
   SIGNALduino_AddSendQueue($hash, $gets{$a[1]}[0] . $arg);
@@ -1072,8 +1133,7 @@ SIGNALduino_DoInit($)
     @{$hash->{QUEUE}} = ();
     $hash->{sendworking} = 0;
     
- # 	if (($hash->{DEF} !~ m/\@DirectIO/) and ($hash->{DEF} !~ m/none/) )
- if (($hash->{DEF} !~ m/\@directio/) and ($hash->{DEF} !~ m/none/) )
+    if (($hash->{DEF} !~ m/\@directio/) and ($hash->{DEF} !~ m/none/) )
 	{
 		SIGNALduino_Log3 $hash, 1, "$name/init: ".$hash->{DEF};
 		$hash->{initretry} = 0;
@@ -1087,9 +1147,18 @@ SIGNALduino_DoInit($)
 	# Reset the counter
 	delete($hash->{XMIT_TIME});
 	delete($hash->{NR_CMD_LAST_H});
+	
+	
+	
+
+  
+  
+	
 	return;
 	return undef;
 }
+
+
 
 # Disable receiver
 sub SIGNALduino_SimpleWrite_XQ($) {
@@ -1170,6 +1239,7 @@ sub SIGNALduino_CheckCmdResp($)
 			$hash->{keepalive}{ok}    = 0;
 			$hash->{keepalive}{retry} = 0;
 			InternalTimer(gettimeofday() + SDUINO_KEEPALIVE_TIMEOUT, "SIGNALduino_KeepAlive", $hash, 0);
+
 		}
 	}
 	else {
@@ -1344,7 +1414,7 @@ SIGNALduino_Read($)
     ($rmsg,$SIGNALduinodata) = split("\n", $SIGNALduinodata, 2);
     $rmsg =~ s/\r//;
     
-    	if ($rmsg =~ m/^\002(M(s|u);.*;)\003/) {
+    	if ($rmsg =~ m/^\002(M(s|u|o);.*;)\003/) {
 		$rmsg =~ s/^\002//;                # \002 am Anfang entfernen
 		my @msg_parts = split(";",$rmsg);
 		my $m0;
@@ -1356,7 +1426,7 @@ SIGNALduino_Read($)
 		my $partD;
 		
 		foreach my $msgPart (@msg_parts) {
-			next if (length($msgPart) le 1 ) ;
+			next if ($msgPart eq "");
 			$m0 = substr($msgPart,0,1);
 			$mnr0 = ord($m0);
 			$m1 = substr($msgPart,1);
@@ -1397,6 +1467,9 @@ SIGNALduino_Read($)
 			}
 			elsif (($m0 eq "C" || $m0 eq "S") && length($m1) == 1) {
 				$part .= "$m0" . "P=$m1;";
+			}
+			elsif ($m0 eq "o" || $m0 eq "m") {
+				$part .= "$m0$m1;";
 			}
 			elsif ($m1 =~ m/^[0-9A-Z]{1,2}$/) {        # bei 1 oder 2 Hex Ziffern nach Dez wandeln 
 				$part .= "$m0=" . hex($m1) . ";";
@@ -1527,12 +1600,12 @@ sub SIGNALduino_ParseHttpResponse
 
     if($err ne "")               											 		# wenn ein Fehler bei der HTTP Abfrage aufgetreten ist
     {
-        SIGNALduino_Log3 $name, 3, "$name: error while requesting ".$param->{url}." - $err";    		# Eintrag fürs Log
+        SIGNALduino_Log3 $name, 3, "$name: error while requesting ".$param->{url}." - $err";    		# Eintrag fuers Log
     }
     elsif($param->{code} eq "200" && $data ne "")                                                       		# wenn die Abfrage erfolgreich war ($data enthaelt die Ergebnisdaten des HTTP Aufrufes)
     {
     	
-        SIGNALduino_Log3 $name, 3, "url ".$param->{url}." returned: ".length($data)." bytes Data";  # Eintrag fürs Log
+        SIGNALduino_Log3 $name, 3, "url ".$param->{url}." returned: ".length($data)." bytes Data";  # Eintrag fuers Log
 		    	
     	if ($param->{command} eq "flash")
     	{
@@ -1554,14 +1627,14 @@ sub SIGNALduino_ParseHttpResponse
 			print $file $data;
 			close $file;
 	
-			# Den Flash Befehl mit der soebene heruntergeladenen Datei ausführen
-			#SIGNALduino_Log3 $name, 3, "calling set ".$param->{command}." $filename";    		# Eintrag fürs Log
+			# Den Flash Befehl mit der soebene heruntergeladenen Datei ausfuehren
+			#SIGNALduino_Log3 $name, 3, "calling set ".$param->{command}." $filename";    		# Eintrag fuers Log
 
 			SIGNALduino_Set($hash,$name,$param->{command},$filename); # $hash->{SetFn}
 			
     	}
     } else {
-    	SIGNALduino_Log3 $name, 3, "$name: undefined error while requesting ".$param->{url}." - $err - code=".$param->{code};    		# Eintrag fürs Log
+    	SIGNALduino_Log3 $name, 3, "$name: undefined error while requesting ".$param->{url}." - $err - code=".$param->{code};    		# Eintrag fuers Log
     }
 }
 
@@ -1894,6 +1967,38 @@ sub SIGNALduno_Dispatch($$$$$)
    }
 }
 
+# param #1 is name of definition 
+# param #2 is protocol id
+# param #3 is dispatched message to check against
+#
+# returns 1 if message matches modulematch + development attribute
+# returns 0 if message does not match modulematch  
+# return -1 if message does not match development attribute
+sub SIGNALduino_moduleMatch
+{
+	my $name = shift;
+	my $id = shift;
+	my $dmsg = shift;
+	my $debug = AttrVal($name,"debug",0);
+	
+	my $modMatchRegex=SIGNALduino_getProtoProp($id,"modulematch",undef);
+	
+	if (!defined($modMatchRegex) || $dmsg =~ m/$modMatchRegex/) {
+		Debug "$name: modmatch passed for: $dmsg" if ($debug);
+		my $developATTR = AttrVal($name,"development","");
+		my $developID = SIGNALduino_getProtoProp($id,"developId","");
+		if ($developID eq "m") {
+			if ( length($developATTR) > 0 && $developATTR =~ m/$developID$id/) { 
+				return 1; #   return 1 da modulematch gefunden wurde			
+			}
+			SIGNALduino_Log3 $name, 3, "$name: ID=id skipped dispatch (developId=$developID). To use, please add $developID$id to the attr development";	
+			return -1;
+		}
+		return 1;
+	}
+	return 0;
+}
+
 sub
 SIGNALduino_Parse_MS($$$$%)
 {
@@ -2097,7 +2202,7 @@ SIGNALduino_Parse_MS($$$$%)
 					my $devid = "m$id";
 					my $develop = lc(AttrVal($name,"development",""));
 					if ($develop !~ m/$devid/) {		# kein dispatch wenn die Id nicht im Attribut development steht
-						SIGNALduino_Log3 $name, 3, "$name: ID=$devid skiped dispatch (developId=m). To use, please add m$id to the attr development";
+						SIGNALduino_Log3 $name, 3, "$name: ID=$devid skipped dispatch (developId=m). To use, please add m$id to the attr development";
 						next;
 					}
 				}
@@ -2115,7 +2220,6 @@ SIGNALduino_Parse_MS($$$$%)
 }
 
 
-
 ## //Todo: check list as reference
 sub SIGNALduino_padbits(\@$)
 {
@@ -2129,7 +2233,7 @@ sub SIGNALduino_padbits(\@$)
 
 # - - - - - - - - - - - -
 #=item SIGNALduino_getProtoProp()
-#This functons, will return a value from the Protocolist and check if it is defined optional you can specify a optional default value that will be reurned
+#This functons, will return a value from the Protocolist and check if the key exists and a value is defined optional you can specify a optional default value that will be reurned
 # 
 # returns "" if the var is not defined
 # =cut
@@ -2141,10 +2245,12 @@ sub SIGNALduino_getProtoProp
 	
 	#my $id = shift;
 	#my $propNameLst = shift;
-	return $ProtocolListSIGNALduino{$id}{$propNameLst} if defined($ProtocolListSIGNALduino{$id}{$propNameLst});
+	return $ProtocolListSIGNALduino{$id}{$propNameLst} if exists($ProtocolListSIGNALduino{$id}{$propNameLst}) && defined($ProtocolListSIGNALduino{$id}{$propNameLst});
 	return $default; # Will return undef if $default is not provided
 	#return undef;
 }
+
+
 
 sub SIGNALduino_Parse_MU($$$$@)
 {
@@ -2153,14 +2259,15 @@ sub SIGNALduino_Parse_MU($$$$@)
 	my $protocolid;
 	my $clockidx=$msg_parts{clockidx};
 	my $rssi=$msg_parts{rssi};
-	my $protocol=undef;
 	my $rawData;
 	my %patternListRaw;
 	my $message_dispatched=0;
 	my $debug = AttrVal($iohash->{NAME},"debug",0);
+	my $rssiStr= "";
 	
 	if (defined($rssi)) {
 		$rssi = ($rssi>=128 ? (($rssi-256)/2-74) : ($rssi/2-74)); # todo: passt dies so? habe ich vom 00_cul.pm
+		$rssiStr= " RSSI = $rssi"
 	}
 	
     Debug "$name: processing unsynced message\n" if ($debug);
@@ -2178,9 +2285,10 @@ sub SIGNALduino_Parse_MU($$$$@)
 
 		## Find matching protocols
 		my $id;
+		
+		
 		foreach $id (@{$hash->{muIdList}}) {
 			
-			my $valid=1;
 			$clockabs= $ProtocolListSIGNALduino{$id}{clockabs};
 			my %patternList;
 			$rawData=$msg_parts{rawData};
@@ -2192,7 +2300,7 @@ sub SIGNALduino_Parse_MU($$$$@)
 					SIGNALduino_Log3 $name, 5, "$name: Error: Unknown filtermethod=$method. Please define it in file $0";
 					next;
 				} else {					
-					SIGNALduino_Log3 $name, 5, "$name: applying filterfunc $method";
+					SIGNALduino_Log3 $name, 5, "$name: for MU Protocol id $id, applying filterfunc $method";
 
 				    no strict "refs";
 					(my $count_changes,$rawData,my %patternListRaw_tmp) = $method->($name,$id,$rawData,%patternListRaw);				
@@ -2204,239 +2312,173 @@ sub SIGNALduino_Parse_MU($$$$@)
 				%patternList = map { $_ => round($patternListRaw{$_}/$clockabs,1) } keys %patternListRaw; 
 			}
 			
-			my $signal_length = length($rawData);        # Length of data array
-			
-			my @keys = sort { $patternList{$a} <=> $patternList{$b} } keys %patternList;
-
-			#Debug Dumper(\%patternList);	
-			#Debug Dumper(@keys);	
-			#$debug=1;
 					
 			Debug "Testing against Protocol id $id -> $ProtocolListSIGNALduino{$id}{name}"  if ($debug);
-	
-#			$valid=SIGNALduino_inTol($ProtocolListSIGNALduino{$id}{clockabs},$clockabs,$clockabs*0.30) if ($ProtocolListSIGNALduino{$id}{clockabs} > 0);
-
-			next if (!$valid) ;
-			
-			my $bit_length = ($signal_length/((scalar @{$ProtocolListSIGNALduino{$id}{one}} + scalar @{$ProtocolListSIGNALduino{$id}{zero}})/2));
-			Debug "Expect $bit_length bits in message"  if ($valid && $debug);
-
-			#Check calculated min length
-			#$valid = $valid && $ProtocolListSIGNALduino{$id}{length_min} <= $bit_length if (exists $ProtocolListSIGNALduino{$id}{length_min}); 
-			#Check calculated max length
-			#$valid = $valid && $ProtocolListSIGNALduino{$id}{length_max} >= $bit_length if (exists $ProtocolListSIGNALduino{$id}{length_max});
-
-			#next if (!$valid) ;
-			#Debug "expecting $bit_length bits in signal" if ($debug && $valid);
-
 			Debug "Searching in patternList: ".Dumper(\%patternList) if($debug);
-			next if (!$valid) ;
 
-	
-			my %patternLookupHash=();
-
-			#Debug "phash:".Dumper(%patternLookupHash);
-			my $pstr="";
-			$valid = $valid && ($pstr=SIGNALduino_PatternExists($hash,\@{$ProtocolListSIGNALduino{$id}{one}},\%patternList,\$rawData)) >=0;
-			Debug "Found matched one" if ($debug && $valid);
-			my $oneStr=$pstr if ($valid);
-			$patternLookupHash{$pstr}="1" if ($valid); ## Append one to our lookuptable
-			Debug "added $pstr " if ($debug && $valid);
-
-			my $zeroStr ="";
-			if (scalar @{$ProtocolListSIGNALduino{$id}{zero}} >0) {
-				$valid = $valid && ($pstr=SIGNALduino_PatternExists($hash,\@{$ProtocolListSIGNALduino{$id}{zero}},\%patternList,\$rawData)) >=0;
-				Debug "Found matched zero" if ($debug && $valid);
-				$zeroStr=$pstr if ($valid);
-				$patternLookupHash{$pstr}="0" if ($valid); ## Append zero to our lookuptable
-				Debug "added $pstr " if ($debug && $valid);
-			}
-
-			if (defined($ProtocolListSIGNALduino{$id}{float}))
-			{
-				$valid = $valid && ($pstr=SIGNALduino_PatternExists($hash,\@{$ProtocolListSIGNALduino{$id}{float}},\%patternList,\$rawData)) >=0;
-				Debug "Found matched float" if ($debug && $valid);
-				$patternLookupHash{$pstr}="F" if ($valid); ## Append float to our lookuptable
-				Debug "added $pstr " if ($debug && $valid);
-			}
-
-			next if (!$valid) ;
-			#Debug "Pattern Lookup Table".Dumper(%patternLookupHash);
-			## Check somethin else
-
-		
-			#Anything seems to be valid, we can start decoding this.			
-
-			SIGNALduino_Log3 $name, 4, "$name: Fingerprint for MU Protocol id $id -> $ProtocolListSIGNALduino{$id}{name} matches, trying to demodulate"  if ($valid);
-			my $signal_width= @{$ProtocolListSIGNALduino{$id}{one}};
-			#Debug $signal_width;
-			
-			my @bit_msg=();							# array to store decoded signal bits
-			
+			my $startStr=""; # Default match if there is no start pattern available
 			my $message_start=0 ;
-			my @msgStartLst;
-			my $startStr="";
-			my $start_regex;
-			#my $oneStr=SIGNALduino_PatternExists($hash,\@{$ProtocolListSIGNALduino{$id}{one}},\%patternList,\$rawData);
-			#my $zeroStr=SIGNALduino_PatternExists($hash,\@{$ProtocolListSIGNALduino{$id}{zero}},\%patternList,\$rawData);
-
-			if (@msgStartLst = SIGNALduino_getProtoProp($id,"start"))
+			my $startLogStr="";
+			
+			if (exists($ProtocolListSIGNALduino{$id}{start}) && defined($ProtocolListSIGNALduino{$id}{start}) && ref($ProtocolListSIGNALduino{$id}{start}) eq 'ARRAY')	# wenn start definiert ist, dann startStr ermitteln und in rawData suchen und in der rawData alles bis zum startStr abschneiden
 			{
-				Debug "msgStartLst: ".Dumper(@msgStartLst)  if ($debug);
-			
-				if ( ($startStr=SIGNALduino_PatternExists($hash,@msgStartLst,\%patternList,\$rawData)) eq -1)
-				{
-					SIGNALduino_Log3 $name, 5, "$name: start pattern for MU Protocol id $id -> $ProtocolListSIGNALduino{$id}{name} mismatches, aborting"  ;
-					$valid=0;
-					next;
-				};
-			} 
-			
-			
-			if (length ($zeroStr) > 0 ){  $start_regex = "$startStr\($oneStr\|$zeroStr\)";}
-			else {$start_regex  = $startStr.$oneStr; }
-			
-			Debug "Regex is: $start_regex" if ($debug);
-
-			$rawData =~ /$start_regex/;
-			if (defined($-[0] && $-[0] > 0)) {
-				$message_start=$-[0]+ length($startStr);
-			} else {
-				undef($message_start);				
-			}
-			undef @msgStartLst;
-			
-			#for (my $i=index($rawData,SIGNALduino_PatternExists($hash,\@{$ProtocolListSIGNALduino{$id}{sync}}))+$signal_width;$i<length($rawData);$i+=$signal_width)
-			Debug "Message starts at $message_start - length of data is ".length($rawData) if ($debug);
-			next if (!defined($message_start));
-			SIGNALduino_Log3 $name, 5, "$name: Starting demodulation at Position $message_start";
-			#my $onepos= index($rawData,SIGNALduino_PatternExists($hash,\@{$ProtocolListSIGNALduino{$id}{one}},\%patternList));
-			#my $zeropos=index($rawData,SIGNALduino_PatternExists($hash,\@{$ProtocolListSIGNALduino{$id}{zero}},\%patternList));
-			#SIGNALduino_Log3 $name, 3, "op=$onepos zp=$zeropos";
-			#Debug "phash:".Dumper(%patternLookupHash);
-			
-			my $padwith = defined($ProtocolListSIGNALduino{$id}{paddingbits}) ? $ProtocolListSIGNALduino{$id}{paddingbits} : 4;
-			
-			for (my $i=$message_start;$i<=length($rawData)-$signal_width;$i+=$signal_width)
-			{
+				Debug "msgStartLst: ".Dumper(\@{$ProtocolListSIGNALduino{$id}{start}})  if ($debug);
 				
-				my $sig_str= substr($rawData,$i,$signal_width);
-				Debug "$name: i=$i  search=$sig_str" if ($debug);
-
-				$valid=1; # Set valid to 1 for every loop
-				#Debug $patternLookupHash{substr($rawData,$i,$signal_width)}; ## Get $signal_width number of chars from raw data string
-				if (exists $patternLookupHash{$sig_str}) 
+				if ( ($startStr=SIGNALduino_PatternExists($hash,\@{$ProtocolListSIGNALduino{$id}{start}},\%patternList,\$rawData)) eq -1)
 				{
-					my $bit = $patternLookupHash{$sig_str};
-					
-					push(@bit_msg,$bit) if (looks_like_number($bit)) ; ## Add the bits to our bit array
+					SIGNALduino_Log3 $name, 5, "$name: start pattern for MU Protocol id $id -> $ProtocolListSIGNALduino{$id}{name} not found, aborting";
+					next;
 				}
-				if (!exists $patternLookupHash{$sig_str} || $i+$signal_width>length($rawData)-$signal_width)  ## Dispatch if last signal or unknown data
+				Debug "startStr is: $startStr" if ($debug);
+				
+				if ($message_start = index($rawData, $startStr)) 
 				{
-					Debug "$name: demodulated message raw (@bit_msg), ".@bit_msg." bits\n" if ($debug);
-					#Check converted message against lengths 
-					$valid = $valid && $ProtocolListSIGNALduino{$id}{length_max} >= scalar @bit_msg  if (defined($ProtocolListSIGNALduino{$id}{length_max}));					
-					$valid = $valid && $ProtocolListSIGNALduino{$id}{length_min} <= scalar @bit_msg  if (defined($ProtocolListSIGNALduino{$id}{length_min})); 
+					$rawData = substr($rawData, $message_start);
+					$startLogStr = "StartStr: $startStr first found at $message_start";
+					Debug "rawData = $rawData" if ($debug);
+					Debug "startStr $startStr found. Message starts at $message_start" if ($debug);
+				} else {
+					Debug "startStr $startStr not found." if ($debug);
+					next;
+				}
+				
+			}
+			
+			my %patternLookupHash=();
+			my $pstr="";
+			my $zeroRegex ="";
+			my $oneRegex ="";
+			my $floatRegex ="";
+			
+			
+			if (($pstr=SIGNALduino_PatternExists($hash,\@{$ProtocolListSIGNALduino{$id}{one}},\%patternList,\$rawData)) eq -1)
+			{
+				SIGNALduino_Log3 $name, 5, "$name: one pattern for MU Protocol id $id not found, aborting";
+				next;
+			}
+			Debug "Found matched one" if ($debug);
 
-					
-					#next if (!$valid);  ## Last chance to try next protocol if there is somethin invalid
-					if ($valid) {
+			$oneRegex=$pstr;
+			$patternLookupHash{$pstr}="1";		## Append one to our lookuptable
+			Debug "added $pstr " if ($debug);
 			
-						my ($rcode,@retvalue) = SIGNALduino_callsub('postDemodulation',$ProtocolListSIGNALduino{$id}{postDemodulation},$name,@bit_msg);
-						next if ($rcode < 1 );
+			if (scalar @{$ProtocolListSIGNALduino{$id}{zero}} >0)
+			{
+				if  (($pstr=SIGNALduino_PatternExists($hash,\@{$ProtocolListSIGNALduino{$id}{zero}},\%patternList,\$rawData)) eq -1)
+				{
+					SIGNALduino_Log3 $name, 5, "$name: zero pattern for MU Protocol id $id not found, aborting";
+					next;
+				}
+				Debug "Found matched zero" if ($debug);
 
-						#SIGNALduino_Log3 $name, 5, "$name: postdemodulation value @retvalue";
+				$zeroRegex='|' . $pstr;
+				$patternLookupHash{$pstr}="0";		## Append zero to our lookuptable
+				Debug "added $pstr " if ($debug);
+			}
+
+			if (exists($ProtocolListSIGNALduino{$id}{float}) && ($pstr=SIGNALduino_PatternExists($hash,\@{$ProtocolListSIGNALduino{$id}{float}},\%patternList,\$rawData)) >=0)
+			{
+				Debug "Found matched float" if ($debug);
+				$floatRegex='|' . $pstr;
+				$patternLookupHash{$pstr}="F";		## Append float to our lookuptable
+				Debug "added $pstr " if ($debug);
+			}
 			
-						@bit_msg = @retvalue;
-						undef(@retvalue); undef($rcode);
+			#Debug "Pattern Lookup Table".Dumper(%patternLookupHash);
+			SIGNALduino_Log3 $name, 4, "$name: Fingerprint for MU Protocol id $id -> $ProtocolListSIGNALduino{$id}{name} matches, trying to demodulate";
 			
+			my $signal_width= @{$ProtocolListSIGNALduino{$id}{one}};
+			my $length_min = $ProtocolListSIGNALduino{$id}{length_min};
+			my $length_max = "";
+			$length_max = $ProtocolListSIGNALduino{$id}{length_max} if (exists($ProtocolListSIGNALduino{$id}{length_max}));
 			
-						while (scalar @bit_msg % $padwith > 0)  ## will pad up full nibbles per default or full byte if specified in protocol
-						{
-							push(@bit_msg,'0');
-							Debug "$name: padding 0 bit to bit_msg array" if ($debug);
-						}
+			my $signalRegex = "(?:" . $oneRegex . $zeroRegex . $floatRegex . "){$length_min,}";
+			Debug "signalRegex is $signalRegex " if ($debug);
+
+			my $nrRestart=0;
+			my $nrDispatch=0;
+			my $regex="(?:$startStr)($signalRegex)";
 			
-						SIGNALduino_Log3 $name, 5, "$name: dispatching bits: @bit_msg";
-						my $dmsg = SIGNALduino_b2h(join "", @bit_msg);
-						$dmsg =~ s/^0+//	 if (defined($ProtocolListSIGNALduino{$id}{remove_zero})); 
-						$dmsg = "$dmsg"."$ProtocolListSIGNALduino{$id}{postamble}" if (defined($ProtocolListSIGNALduino{$id}{postamble}));
-						$dmsg = "$ProtocolListSIGNALduino{$id}{preamble}"."$dmsg" if (defined($ProtocolListSIGNALduino{$id}{preamble}));
-						
-						if (defined($rssi)) {
-							SIGNALduino_Log3 $name, 4, "$name: decoded matched MU Protocol id $id dmsg $dmsg length " . scalar @bit_msg . " RSSI = $rssi";
-						} else {
-							SIGNALduino_Log3 $name, 4, "$name: decoded matched MU Protocol id $id dmsg $dmsg length " . scalar @bit_msg;
-						}
-						
-						my $modulematch;
-						if (defined($ProtocolListSIGNALduino{$id}{modulematch})) {
-							$modulematch = $ProtocolListSIGNALduino{$id}{modulematch};
-						}
-						if (!defined($modulematch) || $dmsg =~ m/$modulematch/) {
-							Debug "$name: dispatching now msg: $dmsg" if ($debug);
-							if (defined($ProtocolListSIGNALduino{$id}{developId}) && substr($ProtocolListSIGNALduino{$id}{developId},0,1) eq "m") {
-								my $devid = "m$id";
-								my $develop = lc(AttrVal($name,"development",""));
-								if ($develop !~ m/$devid/) {		# kein dispatch wenn die Id nicht im Attribut development steht
-									SIGNALduino_Log3 $name, 3, "$name: ID=$devid skiped dispatch (developId=m). To use, please add m$id to the attr development";
-									next;
-								}
-							}
-	
-							SIGNALduno_Dispatch($hash,$rmsg,$dmsg,$rssi,$id);
-							$message_dispatched=1;
-						}
-					} else {
-						if ($debug)
-						{
-							my $debugstr;
-							$debugstr.=$ProtocolListSIGNALduino{$id}{length_min} if defined($ProtocolListSIGNALduino{$id}{length_min});
-							$debugstr.="/";
-							$debugstr.=$ProtocolListSIGNALduino{$id}{length_max} if defined($ProtocolListSIGNALduino{$id}{length_max});
-							
-							Debug "$name: length ($debugstr) does not match (@bit_msg), ".@bit_msg." bits\n";
-						}	
-						
+			while ( $rawData =~ m/$regex/g)		{
+				my $length_str="";
+				$nrRestart++;
+				SIGNALduino_Log3 $name, 5, "part is $1 starts at position $-[0] and ends at ". pos $rawData;				
+			
+				my @pairs = unpack "(a$signal_width)*", $1;
+			
+				if (exists($ProtocolListSIGNALduino{$id}{length_max}) && scalar @pairs > $ProtocolListSIGNALduino{$id}{length_max})	# ist die Nachricht zu lang?
+				{
+					SIGNALduino_Log3 $name, 5, "$name: $nrRestart. skip demodulation (length ".scalar @pairs." is to long) at Pos $-[0] regex ($regex)";
+					next;
+				}
+				
+				if ($nrRestart == 1) {
+					SIGNALduino_Log3 $name, 5, "$name: Starting demodulation ($startLogStr" . "regex: $regex Pos $message_start) length_min_max (".$length_min."..".$length_max.") length=".scalar @pairs; 
+				} else {
+					SIGNALduino_Log3 $name, 5, "$name: $nrRestart. try demodulation$length_str at Pos $-[0]";
+				}
+				
+				
+				
+				
+				my @bit_msg=();			# array to store decoded signal bits
+				foreach my $sigStr (@pairs)
+				{
+					if (exists $patternLookupHash{$sigStr}) {
+						push(@bit_msg,$patternLookupHash{$sigStr})  ## Add the bits to our bit array
 					}
-					@bit_msg=(); # clear bit_msg array
-					
-					#Find next position of valid signal (skip invalid pieces)
-					my $regex=".{$i}".$start_regex;
-					Debug "$name: searching new start with ($regex)\n" if ($debug);
-					
-					$rawData =~ /$regex/;
-					if (defined($-[0]) && ($-[0] > 0)) {
-						#$i=$-[0]+ $i+ length($startStr);
-						$i=$-[0]+ $i;
-						$i=$i-$signal_width if ($i>0 && length($startStr) == 0); #Todo:
-						Debug "$name: found restart at Position $i ($regex)\n" if ($debug);
-					} else {
+				}
+				
+				Debug "$name: demodulated message raw (@bit_msg), ".@bit_msg." bits\n" if ($debug);
+
+				my ($rcode,@retvalue) = SIGNALduino_callsub('postDemodulation',$ProtocolListSIGNALduino{$id}{postDemodulation},$name,@bit_msg);
+				next if ($rcode < 1 );
+				@bit_msg = @retvalue;
+				undef(@retvalue); undef($rcode);
+	
+				my $dispmode="hex"; 
+				$dispmode="bin" if (SIGNALduino_getProtoProp($id,"dispatchBin",0) == 1 );
+				
+				my $padwith = SIGNALduino_getProtoProp($id,"paddingbits",4);
+				while (scalar @bit_msg % $padwith > 0)  ## will pad up full nibbles per default or full byte if specified in protocol
+				{
+					push(@bit_msg,'0');
+					Debug "$name: padding 0 bit to bit_msg array" if ($debug);
+				}		
+				my $dmsg = join ("", @bit_msg);
+				my $bit_length=scalar @bit_msg;
+				@bit_msg=(); # clear bit_msg array
+
+				$dmsg = SIGNALduino_b2h($dmsg) if (SIGNALduino_getProtoProp($id,"dispatchBin",0) == 0 );
+				
+
+				$dmsg =~ s/^0+//	 if (  SIGNALduino_getProtoProp($id,"remove_zero",0) );
+				
+				$dmsg=sprintf("%s%s%s",SIGNALduino_getProtoProp($id,"preamble",""),$dmsg,SIGNALduino_getProtoProp($id,"postamble",""));
+				SIGNALduino_Log3 $name, 5, "$name: dispatching $dispmode: $dmsg";
+				
+				if ( SIGNALduino_moduleMatch($name,$id,$dmsg) == 1)
+				{
+					$nrDispatch++;
+					SIGNALduino_Log3 $name, 4, "$name: decoded matched MU Protocol id $id dmsg $dmsg length $bit_length dispatch($nrDispatch/". AttrVal($name,'maxMuMsgRepeat', 4) . ")$rssiStr";
+					SIGNALduno_Dispatch($hash,$rmsg,$dmsg,$rssi,$id);
+					if ( $nrDispatch == AttrVal($name,"maxMuMsgRepeat", 4))
+					{
 						last;
 					}
-					
-					#if ($startStr)
-					#{
-				#		$i= index($rawData,$startStr,$i);	
-				#	} else {
-				#		$i = (index($rawData,SIGNALduino_PatternExists($hash,\@{$ProtocolListSIGNALduino{$id}{one}},\%patternList),$i+$signal_width) < index($rawData,SIGNALduino_PatternExists($hash,\@{$ProtocolListSIGNALduino{$id}{zero}},\%patternList),$i+$signal_width) ? index($rawData,SIGNALduino_PatternExists($hash,\@{$ProtocolListSIGNALduino{$id}{one}},\%patternList),$i+$signal_width) : index($rawData,SIGNALduino_PatternExists($hash,\@{$ProtocolListSIGNALduino{$id}{zero}},\%patternList),$i+$signal_width));
-				#		$i-=$signal_width if ($i<length($rawData)-$signal_width) ;
-				#		
-				#	}
-				#	last if ($i <=-1);	
-					$i=$i-($signal_width-length($startStr))	if ($i>0 && defined($startStr) && length($startStr) > 0 && length($startStr) < $signal_width);
-					SIGNALduino_Log3 $name, 5, "$name: restarting demodulation at Position $i+$signal_width" if ($debug);
-				
-				}
+				} 
+
+
 			}
-					
-			#my $dmsg = sprintf "%02x", oct "0b" . join "", @bit_msg;			## Array -> String -> bin -> hex
+			SIGNALduino_Log3 $name, 5, "$name: $nrRestart. try, regex ($regex) did not match" if ($nrRestart == 0);
+			$message_dispatched=$message_dispatched+$nrDispatch;
 		}
-		return 0 if (!$message_dispatched);
+		return $message_dispatched;	
 		
-		return 1;
 	}
 }
+
+
 
 
 sub
@@ -2526,7 +2568,7 @@ SIGNALduino_Parse_MC($$$$@)
 							my $devid = "m$id";
 							my $develop = lc(AttrVal($name,"development",""));
 							if ($develop !~ m/$devid/) {		# kein dispatch wenn die Id nicht im Attribut development steht
-								SIGNALduino_Log3 $name, 3, "$name: ID=$devid skiped dispatch (developId=m). To use, please add m$id to the attr development";
+								SIGNALduino_Log3 $name, 3, "$name: ID=$devid skipped dispatch (developId=m). To use, please add m$id to the attr development";
 								next;
 							}
 						}
@@ -2578,7 +2620,7 @@ SIGNALduino_Parse($$$$@)
 	my $debug = AttrVal($iohash->{NAME},"debug",0);
 	
 	
-	Debug "$name: incomming message: ($rmsg)\n" if ($debug);
+	Debug "$name: incoming message: ($rmsg)\n" if ($debug);
 	
 	if (AttrVal($name, "rawmsgEvent", 0)) {
 		DoTrigger($name, "RAWMSG " . $rmsg);
@@ -2730,21 +2772,18 @@ SIGNALduino_Attr(@)
 	}
 	elsif ($aName eq "whitelist_IDs")
 	{
-		SIGNALduino_Log3 $name, 3, "$name Attr: whitelist_IDs";
 		if ($init_done) {		# beim fhem Start wird das SIGNALduino_IdList nicht aufgerufen, da es beim define aufgerufen wird
 			SIGNALduino_IdList("x:$name",$aVal);
 		}
 	}
 	elsif ($aName eq "blacklist_IDs")
 	{
-		SIGNALduino_Log3 $name, 3, "$name Attr: blacklist_IDs";
 		if ($init_done) {		# beim fhem Start wird das SIGNALduino_IdList nicht aufgerufen, da es beim define aufgerufen wird
 			SIGNALduino_IdList("x:$name",undef,$aVal);
 		}
 	}
 	elsif ($aName eq "development")
 	{
-		SIGNALduino_Log3 $name, 3, "$name Attr: development";
 		if ($init_done) {		# beim fhem Start wird das SIGNALduino_IdList nicht aufgerufen, da es beim define aufgerufen wird
 			SIGNALduino_IdList("x:$name",undef,undef,$aVal);
 		}
@@ -2802,7 +2841,7 @@ sub SIGNALduino_IdList($@)
 	my @msIdList = ();
 	my @muIdList = ();
 	my @mcIdList = ();
-	my @skipedId = ();
+	my @skippedId = ();
 
 	if (!defined($aVal)) {
 		$aVal = AttrVal($name,"whitelist_IDs","");
@@ -2860,8 +2899,8 @@ sub SIGNALduino_IdList($@)
 		if (defined($ProtocolListSIGNALduino{$id}{developId}) && substr($ProtocolListSIGNALduino{$id}{developId},0,1) eq "m") {
 			my $devid = "m$id";
 			if ($develop !~ m/$devid/) {		# skip wenn die Id nicht im Attribut development steht
-				#SIGNALduino_Log3 $name, 3, "$name: ID=$devid skiped (developId=m)";
-				push (@skipedId, $devid);
+				#SIGNALduino_Log3 $name, 3, "$name: ID=$devid skipped (developId=m)";
+				push (@skippedId, $devid);
 				next;
 			}
 		}																					 
@@ -2869,8 +2908,8 @@ sub SIGNALduino_IdList($@)
 		if (defined($ProtocolListSIGNALduino{$id}{developId}) && substr($ProtocolListSIGNALduino{$id}{developId},0,1) eq "p") {
 			my $devid = "p$id";
 			if ($develop !~ m/$devid/) {		# skip wenn die Id nicht im Attribut development steht
-				#SIGNALduino_Log3 $name, 3, "$name: ID=$devid skiped (developId=p)";
-				push (@skipedId, $devid);
+				#SIGNALduino_Log3 $name, 3, "$name: ID=$devid skipped (developId=p)";
+				push (@skippedId, $devid);
 				next;
 			}
 		}
@@ -2878,8 +2917,8 @@ sub SIGNALduino_IdList($@)
 		if (defined($ProtocolListSIGNALduino{$id}{developId}) && substr($ProtocolListSIGNALduino{$id}{developId},0,1) eq "y") {
 			my $devid = "y$id";
 			if ($develop !~ m/$devid/) {		# skip wenn die Id nicht im Attribut development steht
-				#SIGNALduino_Log3 $name, 3, "$name: ID=$id skiped (developId=y)";
-				push (@skipedId, $devid);
+				#SIGNALduino_Log3 $name, 3, "$name: ID=$id skipped (developId=y)";
+				push (@skippedId, $devid);
 				next;
 			}
 		}
@@ -2894,6 +2933,8 @@ sub SIGNALduino_IdList($@)
 		}
 		elsif (exists ($ProtocolListSIGNALduino{$id}{clockabs}))
 		{
+			$ProtocolListSIGNALduino{$id}{length_min} = SDUINO_PARSE_DEFAULT_LENGHT_MIN if (!exists($ProtocolListSIGNALduino{$id}{length_min}));	
+
 			push (@muIdList, $id);
 		}
 	}
@@ -2901,13 +2942,13 @@ sub SIGNALduino_IdList($@)
 	@msIdList = sort {$a <=> $b} @msIdList;
 	@muIdList = sort {$a <=> $b} @muIdList;
 	@mcIdList = sort {$a <=> $b} @mcIdList;
-	@skipedId = sort @skipedId;
+	@skippedId = sort @skippedId;
 
 	SIGNALduino_Log3 $name, 3, "$name: IDlist MS @msIdList";
 	SIGNALduino_Log3 $name, 3, "$name: IDlist MU @muIdList";
     SIGNALduino_Log3 $name, 3, "$name: IDlist MC @mcIdList";
 	SIGNALduino_Log3 $name, 3, "$name: IDlist development = $develop" if ($develop);
-	SIGNALduino_Log3 $name, 3, "$name: IDlist development skiped = @skipedId" if (scalar @skipedId > 0);
+	SIGNALduino_Log3 $name, 3, "$name: IDlist development skipped = @skippedId" if (scalar @skippedId > 0);
 	SIGNALduino_Log3 $name, 3, "$name: IDlist blacklist = $blacklist" if ($blacklist);
 	SIGNALduino_Log3 $name, 3, "$name: IDlist whitelist = $aVal" if ($aVal);
 	
@@ -3056,20 +3097,6 @@ sub SIGNALduino_HE_EU($@)
 		}
 	}
 	return (1,@bit_msg);
-}
-
-sub SIGNALduino_postDemo_Hoermann($@) {
-	my ($name, @bit_msg) = @_;
-	my $msg = join("",@bit_msg);
-	
-	if (substr($msg,0,9) ne "000000001") {		# check ident
-		SIGNALduino_Log3 $name, 4, "$name: Hoermann ERROR - Ident not 000000001";
-		return 0, undef;
-	} else {
-		SIGNALduino_Log3 $name, 5, "$name: Hoermann $msg";
-		$msg = substr($msg,9);
-		return (1,split("",$msg));
-	}
 }
 
 sub SIGNALduino_postDemo_EM($@) {
@@ -3383,7 +3410,7 @@ sub SIGNALduino_postDemo_WS2000($@) {
 		SIGNALduino_Log3 $name, 4, "$name: WS2000 Sensortyp $typ Adr $adr - ERROR check XOR";
 		return (0, undef);
 	} else {
-		if ($datalength < 45 || $datalength > 46) { 			# Summe prüfen, außer Typ 1 ohne Summe
+		if ($datalength < 45 || $datalength > 46) { 			# Summe pruefen, außer Typ 1 ohne Summe
 			$data = oct( "0b".(join "", reverse @bit_msg[$dataindex .. $dataindex + 3]));
 			if ($data != ($sum & 0x0F)) {
 				SIGNALduino_Log3 $name, 4, "$name: WS2000 Sensortyp $typ Adr $adr - ERROR sum";
@@ -3823,9 +3850,9 @@ sub SIGNALduino_OSPIR()
 sub SIGNALduino_MCRAW()
 {
 	my ($name,$bitData,$id,$mcbitnum) = @_;
-	my $debug = AttrVal($name,"debug",0);
 
-
+	return (-1," message is to long") if (defined($ProtocolListSIGNALduino{$id}{length_max}) && $mcbitnum > $ProtocolListSIGNALduino{$id}{length_max} );
+	
 	my $hex=SIGNALduino_b2h($bitData);
 	return  (1,$hex); ## Return the bits unchanged in hex
 }
@@ -4090,17 +4117,137 @@ sub SIGNALduino_getProtocolList()
 	return \%ProtocolListSIGNALduino
 }
 
-#print Dumper (%msg_parts);
-#print "\n";
-#SIGNALduino_filterSign(%msg_parts);
-#print Dumper (%msg_parts);
-#print "\n";
+
+
+
+
+
+sub SIGNALduino_querygithubreleases
+{
+    my ($hash) = @_;
+    my $name = $hash->{NAME};
+    my $param = {
+                    url        => "https://api.github.com/repos/RFD-FHEM/SIGNALDuino/releases",
+                    timeout    => 5,
+                    hash       => $hash,                                                                                 # Muss gesetzt werden, damit die Callback funktion wieder $hash hat
+                    method     => "GET",                                                                                 # Lesen von Inhalten
+                    header     => "User-Agent: perl_fhem\r\nAccept: application/json",  								 # Den Header gemaess abzufragender Daten aendern
+                    callback   =>  \&SIGNALduino_githubParseHttpResponse,                                                # Diese Funktion soll das Ergebnis dieser HTTP Anfrage bearbeiten
+                    command    => "queryReleases"
+                    
+                };
+
+    HttpUtils_NonblockingGet($param);                                                                                     # Starten der HTTP Abfrage. Es gibt keinen Return-Code. 
+}
+
+sub SIGNALduino_githubParseHttpResponse($)
+{
+    my ($param, $err, $data) = @_;
+    my $hash = $param->{hash};
+    my $name = $hash->{NAME};
+
+    if($err ne "")                                                                                                         # wenn ein Fehler bei der HTTP Abfrage aufgetreten ist
+    {
+        Log3 $name, 3, "error while requesting ".$param->{url}." - $err (command: $param->{command}";                                                  # Eintrag fuers Log
+        #readingsSingleUpdate($hash, "fullResponse", "ERROR");                                                              # Readings erzeugen
+    }
+
+    elsif($data ne "")                                                                                                     # wenn die Abfrage erfolgreich war ($data enthaelt die Ergebnisdaten des HTTP Aufrufes)
+    {
+    	my $json_array = decode_json($data);
+    	#print  Dumper($json_array);
+    	
+       	if ($param->{command} eq "queryReleases") {
+	        #Log3 $name, 3, "url ".$param->{url}." returned: $data";                                                            # Eintrag fuers Log
+	
+			my @fwreleases;
+			if (ref($json_array) eq "ARRAY") {
+				foreach my $item( @$json_array ) { 
+					my %fwrelease;
+		
+					#Debug " item = ".Dumper($item);
+					$fwrelease{releasename} = $item->{name};
+					$fwrelease{isprerelease} = $item->{prerelease};
+					$fwrelease{tagname} = $item->{tag_name}; # Anzeige in Auswahlbox
+					
+					foreach my $asset (@{$item->{assets}})
+					{
+				    	my %fileinfo;
+						
+						$fileinfo{filename} = $asset->{name};
+						$fileinfo{dlurl} = $asset->{browser_download_url};
+						$fileinfo{create_date} = $asset->{created_at};
+						push @{$fwrelease{files}}, \%fileinfo;
+						
+					}
+		            #Debug $item->{name}.": ".$item->{prerelease}.", ".$item->{assets}[0]->{name}."=".$item->{assets}[0]->{browser_download_url};
+		            
+		            
+		      
+				   #for my $key (keys(%$item)) {
+				     # my $val = $item->{$key};
+		      		  
+		      		#  print "$key: $val\n";
+		      		  
+		    		#}
+					push @fwreleases, \%fwrelease;
+			
+				}
+			}
+			#Debug " releases = ".Data::Dumper->new([\@fwreleases],[qw(fwreleases)])->Indent(3)->Quotekeys(0)->Dump;
+			
+			my $releaselist="";
+			foreach my $release (@fwreleases)
+			{
+				next if (AttrVal($name,"updateChannelFW","stable") eq "stable" && $release->{isprerelease});
+				
+				$releaselist.=$release->{tagname}.",";
+			}
+			$releaselist =~ s/,$//;
+			
+	        # An dieser Stelle die Antwort parsen / verarbeiten mit $data
+	        #Debug "updating update set with: $releaselist";
+	
+	
+		  $hash->{additionalSets}{flash} = $releaselist;
+	
+	
+	      #readingsSingleUpdate($hash, "fullResponse", $data);                                                                # Readings erzeugen
+    	} elsif ($param->{command} eq "getReleaseByTag") {
+			#Debug " json response = ".Dumper($json_array);
+			
+			my @fwfiles;
+			my $hardware=AttrVal($name,"hardware","nano328");
+			foreach my $asset (@{$json_array->{assets}})
+			{
+				my %fileinfo;
+				if ( $asset->{name} =~ m/$hardware/i)  
+				{
+					$fileinfo{filename} = $asset->{name};
+					$fileinfo{dlurl} = $asset->{browser_download_url};
+					$fileinfo{create_date} = $asset->{created_at};
+					Debug " firmwarefiles = ".Dumper(@fwfiles);
+					push @fwfiles, \%fileinfo;
+					
+					SIGNALduino_Set($hash,$name,"flash",$asset->{browser_download_url}); # $hash->{SetFn
+					
+					last;
+					
+				}
+			}
+			
+    	}
+    }
+    # Damit ist die Abfrage zuende.
+    # Evtl. einen InternalTimer neu schedulen
+    FW_directNotify("#FHEMWEB:$FW_wname", "location.reload('true')", "");
+}
 
 1;
 
 =pod
 =item summary    supports the same low-cost receiver for digital signals
-=item summary_DE Unterst&uumltzt den gleichnamigen Low-Cost Empf&aumlnger fuer digitale Signale
+=item summary_DE Unterst&uumltzt den gleichnamigen Low-Cost Empf&aumlnger f&uuml;r digitale Signale
 =begin html
 
 <a name="SIGNALduino"></a>
@@ -4108,48 +4255,31 @@ sub SIGNALduino_getProtocolList()
 
 	<table>
 	<tr><td>
-	The SIGNALduino ia based on an idea from mdorenka published at <a
-	href="http://forum.fhem.de/index.php/topic,17196.0.html">FHEM Forum</a>.
-
-	With the opensource firmware (see this <a
-	href="https://github.com/RFD-FHEM/SIGNALduino">link</a>) it is capable
-	to receive and send different protocols over different medias. Currently are 433Mhz protocols implemented.
-	<br><br>
-
-	The following device support is currently available:
-	<br><br>
-
-
-	Wireless switches  <br>
+	The SIGNALduino ia based on an idea from mdorenka published at <a href="http://forum.fhem.de/index.php/topic,17196.0.html">FHEM Forum</a>. With the opensource firmware (see this <a href="https://github.com/RFD-FHEM/SIGNALduino">link</a>) it is capable to receive and send different protocols over different medias. Currently are 433Mhz protocols implemented.<br><br>
+	The following device support is currently available:<br><br>
+	Wireless switches<br>
 	<ul>
-		<li>ITv1 & ITv3/Elro and other brands using pt2263 or arctech protocol--> uses IT.pm<br>
-				In the ITv1 protocol is used to sent a default ITclock from 250 and it may be necessary in the IT-Modul to define the attribute ITclock</li>
-    <li>ELV FS10 -> 10_FS10</li>
-    <li>ELV FS20 -> 10_FS20</li>
+		<li>ITv1 & ITv3/Elro and other brands using pt2263 or arctech protocol--> uses IT.pm<br>In the ITv1 protocol is used to sent a default ITclock from 250 and it may be necessary in the IT-Modul to define the attribute ITclock</li>
+    		<li>ELV FS10 -> 10_FS10</li>
+    		<li>ELV FS20 -> 10_FS20</li>
 	</ul>
 	<br>
-	
-	Temperatur / humidity sensors
+	Temperature / humidity sensors
 	<ul>
 		<li>PEARL NC7159, LogiLink WS0002,GT-WT-02,AURIOL,TCM97001, TCM27 and many more -> 14_CUL_TCM97001 </li>
 		<li>Oregon Scientific v2 and v3 Sensors  -> 41_OREGON.pm</li>
 		<li>Temperatur / humidity sensors suppored -> 14_SD_WS07</li>
-    <li>technoline WS 6750 and TX70DTH -> 14_SD_WS07</li>
-    <li>Eurochon EAS 800z -> 14_SD_WS07</li>
-    <li>CTW600, WH1080	-> 14_SD_WS09 </li>
-    <li>Hama TS33C, Bresser Thermo/Hygro Sensor -> 14_Hideki</li>
-    <li>FreeTec Aussenmodul NC-7344 -> 14_SD_WS07</li>
-    <li>La Crosse WS-7035, WS-7053, WS-7054 -> 14_CUL_TX</li>
-    <li>ELV WS-2000, La Crosse WS-7000 -> 14_CUL_WS</li>
+    		<li>technoline WS 6750 and TX70DTH -> 14_SD_WS07</li>
+    		<li>Eurochon EAS 800z -> 14_SD_WS07</li>
+    		<li>CTW600, WH1080	-> 14_SD_WS09 </li>
+    		<li>Hama TS33C, Bresser Thermo/Hygro Sensor -> 14_Hideki</li>
+    		<li>FreeTec Aussenmodul NC-7344 -> 14_SD_WS07</li>
+    		<li>La Crosse WS-7035, WS-7053, WS-7054 -> 14_CUL_TX</li>
+    		<li>ELV WS-2000, La Crosse WS-7000 -> 14_CUL_WS</li>
 	</ul>
 	<br>
-
-	It is possible to attach more than one device in order to get better
-	reception, fhem will filter out duplicate messages. See more at the <a href="#global">global</a> section with attribute dupTimeout<>br><br>
-
-	Note: this module require the Device::SerialPort or Win32::SerialPort
-	module. It can currently only attatched via USB.
-
+	It is possible to attach more than one device in order to get better reception, fhem will filter out duplicate messages. See more at the <a href="#global">global</a> section with attribute dupTimeout<>br><br>
+	Note: this module require the Device::SerialPort or Win32::SerialPort module. It can currently only attatched via USB.
 	</td>
 	</tr>
 	</table>
@@ -4158,39 +4288,46 @@ sub SIGNALduino_getProtocolList()
 	<b>Define</b>
 	<ul><code>define &lt;name&gt; SIGNALduino &lt;device&gt; </code></ul>
 	USB-connected devices (SIGNALduino):<br>
-	<ul><li>
-		&lt;device&gt; specifies the serial port to communicate with the SIGNALduino.
-		The name of the serial-device depends on your distribution, under
-		linux the cdc_acm kernel module is responsible, and usually a
-		/dev/ttyACM0 or /dev/ttyUSB0 device will be created. If your distribution does not have a
-		cdc_acm module, you can force usbserial to handle the SIGNALduino by the
-		following command:
-		<ul>
-		modprobe usbserial 
-		vendor=0x03eb
-		product=0x204b
-		</ul>In this case the device is most probably
-		/dev/ttyUSB0.<br><br>
-
-		You can also specify a baudrate if the device name contains the @
-		character, e.g.: /dev/ttyACM0@57600<br><br>This is also the default baudrate
-
-		It is recommended to specify the device via a name which does not change:
-		e.g. via by-id devicename: /dev/serial/by-id/usb-1a86_USB2.0-Serial-if00-port0@57600
-
-		If the baudrate is "directio" (e.g.: /dev/ttyACM0@directio), then the
-		perl module Device::SerialPort is not needed, and fhem opens the device
-		with simple file io. This might work if the operating system uses sane
-		defaults for the serial parameters, e.g. some Linux distributions and
-		OSX.  <br><br>
+	<ul>
+		<li>
+		&lt;device&gt; specifies the serial port to communicate with the SIGNALduino. The name of the serial-device depends on your distribution, under linux the cdc_acm kernel module is responsible, and usually a /dev/ttyACM0 or /dev/ttyUSB0 device will be created. If your distribution does not have a	cdc_acm module, you can force usbserial to handle the SIGNALduino by the following command:
+		<ul>		
+			<li>modprobe usbserial</li>
+			<li>vendor=0x03eb</li>
+			<li>product=0x204b</li>
+		</ul>
+		In this case the device is most probably /dev/ttyUSB0.<br><br>
+		You can also specify a baudrate if the device name contains the @ character, e.g.: /dev/ttyACM0@57600<br><br>This is also the default baudrate.<br>
+		It is recommended to specify the device via a name which does not change:<br>
+		e.g. via by-id devicename: /dev/serial/by-id/usb-1a86_USB2.0-Serial-if00-port0@57600<br>
+		If the baudrate is "directio" (e.g.: /dev/ttyACM0@directio), then the perl module Device::SerialPort is not needed, and fhem opens the device with simple file io. This might work if the operating system uses sane defaults for the serial parameters, e.g. some Linux distributions and OSX.<br><br>
 		</li>
-
 	</ul>
 
 	
 	<a name="SIGNALduinoset"></a>
-	<b>SET</b>
+	<b>Set</b>
 	<ul>
+		<li>freq / bWidth / patable / rAmpl / sens<br>
+		Only with CC1101 receiver.<br>
+		Set the sduino frequency / bandwidth / PA table / receiver-amplitude / sensitivity<br>
+		
+		Use it with care, it may destroy your hardware and it even may be
+		illegal to do so. Note: The parameters used for RFR transmission are
+		not affected.<br>
+		<ul>
+			<a name="cc1101_freq"></a>
+			<li><code>freq</code> sets both the reception and transmission frequency. Note: Although the CC1101 can be set to frequencies between 315 and 915 MHz, the antenna interface and the antenna is tuned for exactly one frequency. Default is 433.920 MHz (or 868.350 MHz). If not set, frequency from <code>cc1101_frequency</code> attribute will be set.</li>
+			<a name="cc1101_bWidth"></a>
+			<li><code>bWidth</code> can be set to values between 58 kHz and 812 kHz. Large values are susceptible to interference, but make possible to receive inaccurately calibrated transmitters. It affects tranmission too. Default is 325 kHz.</li>
+			<a name="cc1101_patable"></a>
+			<li><code>patable</code> change the PA table (power amplification for RF sending)</li>
+			<a name="cc1101_rAmpl"></a>
+			<li><code>rAmpl</code> is receiver amplification, with values between 24 and 42 dB. Bigger values allow reception of weak signals. Default is 42.</li>
+			<a name="cc1101_sens"></a>
+			<li><code>sens</code> is the decision boundary between the on and off values, and it is 4, 8, 12 or 16 dB.  Smaller values allow reception of less clear signals. Default is 4 dB.</li>
+		</ul>
+		</li><br>
 		<a name="close"></a>
 		<li>close<br>
 		Closes the connection to the device.
@@ -4210,80 +4347,47 @@ sub SIGNALduino_getProtocolList()
 			Allows you to enable the message processing for 
 			<ul>
 				<li>messages with sync (syncedMS)</li>
-				<li>messages without a sync pulse (unsyncedMU) </li>
-				<li>manchester encoded messages (manchesterMC) </li>
+				<li>messages without a sync pulse (unsyncedMU)</li>
+				<li>manchester encoded messages (manchesterMC)</li>
 			</ul>
 			The new state will be saved into the eeprom of your arduino.
 		</li><br>
-		
-		<li>freq / bWidth / patable / rAmpl / sens<br>
-		Only with CC1101 receiver.<br>
-		Set the sduino frequency / bandwidth / PA table / receiver-amplitude / sensitivity<br>
-		
-		Use it with care, it may destroy your hardware and it even may be
-		illegal to do so. Note: The parameters used for RFR transmission are
-		not affected.<br>
-		<ul>
-		<a name="cc1101_freq"></a>
-		<li>freq sets both the reception and transmission frequency. Note:
-		    Although the CC1101 can be set to frequencies between 315 and 915
-		    MHz, the antenna interface and the antenna of the CUL is tuned for
-		    exactly one frequency. Default is 868.3 MHz (or 433 MHz)</li>
-		<a name="cc1101_bWidth"></a>
-		<li>bWidth can be set to values between 58 kHz and 812 kHz. Large values
-		    are susceptible to interference, but make possible to receive
-		    inaccurately calibrated transmitters. It affects tranmission too.
-		    Default is 325 kHz.</li>
-		<a name="cc1101_patable"></a>
-		<li>patable change the PA table (power amplification for RF sending) 
-		</li>
-		<a name="cc1101_rAmpl"></a>
-		<li>rAmpl is receiver amplification, with values between 24 and 42 dB.
-		    Bigger values allow reception of weak signals. Default is 42.
-		</li>
-		<a name="cc1101_sens"></a>
-		<li>sens is the decision boundary between the on and off values, and it
-		    is 4, 8, 12 or 16 dB.  Smaller values allow reception of less clear
-		    signals. Default is 4 dB.</li>
-		</ul>
-		</li><br>
 		<a name="flash"></a>
 		<li>flash [hexFile|url]<br>
-			The SIGNALduino needs the right firmware to be able to receive and deliver the sensor data to fhem. In addition to the way using the
-			arduino IDE to flash the firmware into the SIGNALduino this provides a way to flash it directly from FHEM.
-			You can specify a file on your fhem server or specify a url from which the firmware is downloaded
-
-			There are some requirements:
-			<ul>
-				<li>avrdude must be installed on the host<br>
-					On a Raspberry PI this can be done with: sudo apt-get install avrdude</li>
-				<li>the hardware attribute must be set if using any other hardware as an Arduino nano<br>
-					This attribute defines the command, that gets sent to avrdude to flash the uC.<br></li>
-			</ul>
+		The SIGNALduino needs the right firmware to be able to receive and deliver the sensor data to fhem. In addition to the way using the arduino IDE to flash the firmware into the SIGNALduino this provides a way to flash it directly from FHEM. You can specify a file on your fhem server or specify a url from which the firmware is downloaded There are some requirements:
+		<ul>
+			<li>avrdude must be installed on the host<br> On a Raspberry PI this can be done with: sudo apt-get install avrdude</li>
+			<li>the hardware attribute must be set if using any other hardware as an Arduino nano<br> This attribute defines the command, that gets sent to avrdude to flash the uC.</li>
+		</ul>
 		Example:
 		<ul>
 			<li>flash via hexFile: <code>set sduino flash ./FHEM/firmware/SIGNALduino_mega2560.hex</code></li>
 			<li>flash via url for Nano with CC1101: <code>set sduino flash https://github.com/RFD-FHEM/SIGNALDuino/releases/download/3.3.1-RC7/SIGNALDuino_nanocc1101.hex</code></li>
-		</ul><br>
-		</li>
-		</li>
-		<u><i>note model radino:</u></i><ul>
-		<li>Sometimes there can be problems flashing radino on Linux. <a href="https://wiki.in-circuit.de/index.php5?title=radino_common_problems">Here in the wiki under point "radino & Linux" is a patch!</a></li>
-		<li>To activate the bootloader of the radino there are 2 variants.
-		<ul><li>1) modules that contain a BSL-button:</li>
+		</ul>
+		<i><u>note model radino:</u></i>
+		<ul>
+			<li>Sometimes there can be problems flashing radino on Linux. <a href="https://wiki.in-circuit.de/index.php5?title=radino_common_problems">Here in the wiki under point "radino & Linux" is a patch!</a></li>
+			<li>To activate the bootloader of the radino there are 2 variants.
 			<ul>
-			- apply supply voltage<br>
-			- press & hold BSL- and RESET-Button<br>
-			- release RESET-button, release BSL-button<br>
-			 (repeat these steps if your radino doesn't enter bootloader mode right away.)
+				<li>1) modules that contain a BSL-button:
+				<ul>
+					<li>apply supply voltage</li>
+					<li>press & hold BSL- and RESET-Button</li>
+					<li>release RESET-button, release BSL-button</li>
+			 		<li>(repeat these steps if your radino doesn't enter bootloader mode right away.)</li>
+				</ul>
+				</li>
+				<li>2) force bootloader:
+				<ul>
+					<li>pressing reset button twice</li>
+				</ul>
+				</li>
 			</ul>
-			<li>2) force bootloader:<ul>
-			- pressing reset button twice</ul>
-			</li></ul>
-		<li>In bootloader mode, the radino gets a different USB ID.</li><br>
-		<b>If the bootloader is enabled, it signals with a flashing LED. Then you have 8 seconds to flash.</b>
-		</li>
-		</ul><br>
+			<li>In bootloader mode, the radino gets a different USB ID.</li><br>
+			<b>If the bootloader is enabled, it signals with a flashing LED. Then you have 8 seconds to flash.</b>
+			</li>
+		</ul>
+		</li><br>
 		<a name="reset"></a>
 		<li>reset<br>
 		This will do a reset of the usb port and normaly causes to reset the uC connected.
@@ -4327,19 +4431,25 @@ sub SIGNALduino_getProtocolList()
 	<a name="SIGNALduinoget"></a>
 	<b>Get</b>
 	<ul>
-        <a name="ccconf"></a>
+        <a name="availableFirmware"></a>
+        <li>availableFirmware<br>
+		Retrieves available firmware versions from github and displays them in set flash command.
+		</li><br>
+		<a name="ccconf"></a>
         <li>ccconf<br>
-		Only with cc1101 receiver.
 		Read some CUL radio-chip (cc1101) registers (frequency, bandwidth, etc.),
-		and display them in human readable form.
+		and display them in human readable form.<br>
+		Only with cc1101 receiver.
 		</li><br>
         <a name="ccpatable"></a>
 		<li>ccpatable<br>
-		read cc1101 PA table (power amplification for RF sending)
+		read cc1101 PA table (power amplification for RF sending)<br>
+		Only with cc1101 receiver.
 		</li><br>
         <a name="ccreg"></a>
 		<li>ccreg<br>
-		read cc1101 registers (99 reads all cc1101 registers)
+		read cc1101 registers (99 reads all cc1101 registers)<br>
+		Only with cc1101 receiver.
 		</li><br>
         <a name="cmds"></a>
 		<li>cmds<br>
@@ -4384,55 +4494,51 @@ sub SIGNALduino_getProtocolList()
 	<a name="SIGNALduinoattr"></a>
 	<b>Attributes</b>
 	<ul>
-	<li><a href="#addvaltrigger">addvaltrigger</a><br>
-        Create triggers for additional device values. Right now these are RSSI, RAWMSG and DMSG.
-        </li><br>
-        <a name="blacklist_IDs"></a>
-        <li>blacklist_IDs<br>
-        The blacklist works only if a whitelist not exist.
-        </li><br>
-        <a name="cc1101_frequency"></a>
+		<li><a href="#addvaltrigger">addvaltrigger</a><br>
+        	Create triggers for additional device values. Right now these are RSSI, RAWMSG and DMSG.
+        	</li><br>
+        	<a name="blacklist_IDs"></a>
+        	<li>blacklist_IDs<br>
+        	The blacklist works only if a whitelist not exist.
+        	</li><br>
+        	<a name="cc1101_frequency"></a>
 		<li>cc1101_frequency<br>
-        Since the PA table values ​​are frequency-dependent, is at 868 MHz a value greater 800 required.
-        </li><br>
-	<a name="debug"></a>
-	<li>debug<br>
-	This will bring the module in a very verbose debug output. Usefull to find new signals and verify if the demodulation works correctly.
-	</li><br>
-	<a name="development"></a>
-	<li>development<br>
-	With development you can enable protocol decoding for protocolls witch are still in development and may not be very accurate implemented. 
-	This can result in crashes or throw high amount of log entrys in your logfile, so be careful to use this. <br><br>
-	
-	Protocols flagged with a developID flag are not loaded unless specified to do so.<br>
-	
-	<ul><li>If the protocoll is developed well, but the logical module is not ready, developId => 'm' is set. 
-    You can enable it with the attribute: <br> Specify "m" followed with the protocol id to enable it.</li>
-	<li>If the flag developId => 'p' is set in the protocol defintion then the protocol ID is reserved.</li>
-	<li>If the flag developId => 'y' is set in the protocol defintion then the protocol is still in development. You can enable it with the attribute:<br>
-	Specify "y" followed with the protocol id to enable it.</li>
-	</ul><br>
-	</li>
-	<li><a href="#do_not_notify">do_not_notify</a></li><br>
-	<li><a href="#attrdummy">dummy</a></li><br>
-    <a name="doubleMsgCheck_IDs"></a>
-	<li>doubleMsgCheck_IDs<br>
-	This attribute allows it, to specify protocols which must be received two equal messages to call dispatch to the modules.<br>
-	You can specify multiple IDs wih a colon : 0,3,7,12<br>
-	</li><br>
-    <a name="eventlogging"></a>
-	<li>eventlogging<br>
-    With this attribute you can control if every logmessage is also provided as event. This allows to generate event for every log messages.
-    Set this to 0 and logmessages are only saved to the global fhem logfile if the loglevel is higher or equal to the verbose attribute.
-    Set this to 1 and every logmessages is also dispatched as event. This allows you to log the events in a seperate logfile.
-    </li><br>
-	<a name="flashCommand"></a>
-	<li>flashCommand<br>
-    	This is the command, that is executed to performa the firmware flash. Do not edit, if you don't know what you are doing.<br>
+        	Since the PA table values are frequency-dependent, at 868 MHz a value greater 800 required.
+        	</li><br>
+		<a name="debug"></a>
+		<li>debug<br>
+		This will bring the module in a very verbose debug output. Usefull to find new signals and verify if the demodulation works correctly.
+		</li><br>
+		<a name="development"></a>
+		<li>development<br>
+		With development attribute you can enable protocol decoding for protocols which are still in development and may not be very accurate implemented. This can result in crashes or throw high amount of log entries in your logfile, so be careful to use this. <br><br>
+		Protocols flagged with a developID flag are not loaded unless specified to do so.<br>
+		<ul>
+			<li>If the protocoll is developed well, but the logical module is not ready, developId => 'm' is set. You can enable it with the attribute: <br> Specify "m" followed with the protocol id to enable it.</li>
+			<li>If the flag developId => 'p' is set in the protocol defintion then the protocol ID is reserved.</li>
+			<li>If the flag developId => 'y' is set in the protocol defintion then the protocol is still in development. You can enable it with the attribute:<br> Specify "y" followed with the protocol id to enable it.</li>
+		</ul><br>
+		</li>
+		<li><a href="#do_not_notify">do_not_notify</a></li><br>
+		<li><a href="#attrdummy">dummy</a></li><br>
+    		<a name="doubleMsgCheck_IDs"></a>
+		<li>doubleMsgCheck_IDs<br>
+		This attribute allows it, to specify protocols which must be received two equal messages to call dispatch to the modules.<br>
+		You can specify multiple IDs wih a colon : 0,3,7,12<br>
+		</li><br>
+    		<a name="eventlogging"></a>
+		<li>eventlogging<br>
+    		With this attribute you can control if every logmessage is also provided as event. This allows to generate event for every log messages.
+    		Set this to 0 and logmessages are only saved to the global fhem logfile if the loglevel is higher or equal to the verbose attribute.
+    		Set this to 1 and every logmessages is also dispatched as event. This allows you to log the events in a seperate logfile.
+    		</li><br>
+		<a name="flashCommand"></a>
+		<li>flashCommand<br>
+    		This is the command, that is executed to performa the firmware flash. Do not edit, if you don't know what you are doing.<br>
 		If the attribute not defined, it uses the default settings. <b>If the user defines the attribute manually, the system uses the specifications!</b><br>
-    	<ul>
-		<li>default for nano, nanoCC1101, miniculCC1101, promini: <code>avrdude -c arduino -b [BAUDRATE] -P [PORT] -p atmega328p -vv -U flash:w:[HEXFILE] 2>[LOGFILE]</code></li>
-		<li>default for radinoCC1101: <code>avrdude -c avr109 -b [BAUDRATE] -P [PORT] -p atmega32u4 -vv -D -U flash:w:[HEXFILE] 2>[LOGFILE]</code></li>
+    		<ul>
+			<li>default for nano, nanoCC1101, miniculCC1101, promini: <code>avrdude -c arduino -b [BAUDRATE] -P [PORT] -p atmega328p -vv -U flash:w:[HEXFILE] 2>[LOGFILE]</code></li>
+			<li>default for radinoCC1101: <code>avrdude -c avr109 -b [BAUDRATE] -P [PORT] -p atmega32u4 -vv -D -U flash:w:[HEXFILE] 2>[LOGFILE]</code></li>
 		</ul>
 		It contains some place-holders that automatically get filled with the according values:<br>
 		<ul>
@@ -4450,68 +4556,76 @@ sub SIGNALduino_getProtocolList()
 			The logfile that collects information about the flash process. It gets displayed in FHEM after finishing the flash process</li>
 		</ul><br>
 		<u><i>note:</u></i> ! Sometimes there can be problems flashing radino on Linux. <a href="https://wiki.in-circuit.de/index.php5?title=radino_common_problems">Here in the wiki under the point "radino & Linux" is a patch!</a>
-    </li><br>
-    <a name="hardware"></a>
-	<li>hardware<br>
-    When using the flash command, you should specify what hardware you have connected to the usbport. Doing not, can cause failures of the device.
+    		</li><br>
+    		<a name="hardware"></a>
+		<li>hardware<br>
+    		When using the flash command, you should specify what hardware you have connected to the usbport. Doing not, can cause failures of the device.
 		<ul>
-			<li>ESP_1MCC1101: ESP8266 with 1 MB flash and CC1101 receiver</li>
-			<li>ESP32: ESP32 </li>
-			<li>nano328: Arduino Nano with cheap receiver</li>
-			<li>nanoCC1101: Arduino Nano wirh CC110x receiver</li>
+			<li>ESP_1M: ESP8266 with 1 MB flash and CC1101 receiver</li>
+			<li>ESP32: ESP32</li>
+			<li>nano: Arduino Nano 328 with cheap receiver</li>
+			<li>nanoCC1101: Arduino Nano 328 wirh CC110x receiver</li>
 			<li>miniculCC1101: Arduino pro Mini with CC110x receiver and cables as a minicul</li>
-			<li>promini328: Arduino Pro Mini with cheap receiver </li>
+			<li>promini: Arduino Pro Mini 328 with cheap receiver </li>
 			<li>radinoCC1101: Arduino compatible radino with cc1101 receiver</li>
 		</ul>
-	</li><br>
-    <a name="minsecs"></a>
-	<li>minsecs<br>
-    This is a very special attribute. It is provided to other modules. minsecs should act like a threshold. All logic must be done in the logical module. 
-    If specified, then supported modules will discard new messages if minsecs isn't past.
-    </li><br>
-    <a name="noMsgVerbose"></a>
-    <li>noMsgVerbose<br>
-    With this attribute you can control the logging of debug messages from the io device.
-    If set to 3, this messages are logged if global verbose is set to 3 or higher.
-    </li><br>
-    <a name="longids"></a>
-	<li>longids<br>
-        Comma separated list of device-types for SIGNALduino that should be handled using long IDs. This additional ID allows it to differentiate some weather sensors, if they are sending on the same channel. Therfor a random generated id is added. If you choose to use longids, then you'll have to define a different device after battery change.<br>
-		Default is to not to use long IDs for all devices.
-      <br><br>
-      Examples:<PRE>
-# Do not use any long IDs for any devices:
-attr sduino longids 0
-# Use any long IDs for all devices (this is default):
-attr sduino longids 1
-# Use longids for BTHR918N devices.
-# Will generate devices names like BTHR918N_f3.
-attr sduino longids BTHR918N
-</PRE></li>
-<a name="rawmsgEvent"></a>
-<li>rawmsgEvent<br>
-When set to "1" received raw messages triggers events
-</li><br>
-<a name="suppressDeviceRawmsg"></a>
-<li>suppressDeviceRawmsg<br>
-When set to 1, the internal "RAWMSG" will not be updated with the received messages
-</li><br>
-<a name="whitelist_IDs"></a>
-<li>whitelist_IDs<br>
-This attribute allows it, to specify whichs protocos are considured from this module.
-Protocols which are not considured, will not generate logmessages or events. They are then completly ignored. 
-This makes it possible to lower ressource usage and give some better clearnes in the logs.
-You can specify multiple whitelistIDs wih a colon : 0,3,7,12<br>
-With a # at the beginnging whitelistIDs can be deactivated.
-</li><br>
-   <a name="WS09_CRCAUS"></a>
-   <li>WS09_CRCAUS<br>
-       <br>0: CRC-Check WH1080 CRC = 0  on, default   
-       <br>2: CRC = 49 (x031) WH1080, set OK
-    </li>
-   </ul>
-							  
-		   
+		</li><br>
+		<li>maxMuMsgRepeat<br>
+		MU signals can contain multiple repeats of the same message. The results are all send to a logical module. You can limit the number of scanned repetitions. Defaukt is 4, so after found 4 repeats, the demoduation is aborted. 	
+		<br></li>
+    		<a name="minsecs"></a>
+		<li>minsecs<br>
+    		This is a very special attribute. It is provided to other modules. minsecs should act like a threshold. All logic must be done in the logical module. 
+    		If specified, then supported modules will discard new messages if minsecs isn't past.
+    		</li><br>
+    		<a name="noMsgVerbose"></a>
+    		<li>noMsgVerbose<br>
+    		With this attribute you can control the logging of debug messages from the io device.
+    		If set to 3, this messages are logged if global verbose is set to 3 or higher.
+    		</li><br>
+    		<a name="longids"></a>
+		<li>longids<br>
+        	Comma separated list of device-types for SIGNALduino that should be handled using long IDs. This additional ID allows it to differentiate some weather sensors, if they are sending on the same channel. Therfor a random generated id is added. If you choose to use longids, then you'll have to define a different device after battery change.<br> Default is to not to use long IDs for all devices.<br>
+		Following modules can use this function: 14_Hideki, 41_OREGON, 14_CUL_TCM97001, 14_SD_WS07.<br>
+      		Examples:<PRE>
+		# Do not use any long IDs for any devices (this is default):
+		attr sduino longids 0
+		# Use any long IDs for all devices:
+		attr sduino longids 1
+		# Use longids for SD_WS07 devices.
+		# Will generate devices names like SD_WS07_TH_3.
+		attr sduino longids SD_WS07
+		</PRE></li><br>
+		<a name="rawmsgEvent"></a>
+		<li>rawmsgEvent<br>
+		When set to "1" received raw messages triggers events
+		</li><br>
+		<a name="suppressDeviceRawmsg"></a>
+		<li>suppressDeviceRawmsg<br>
+		When set to 1, the internal "RAWMSG" will not be updated with the received messages
+		</li><br>
+		<a name="updateChannelFW"></a>
+		<li>updateChannelFW<br>
+		The module can search for new firmware versions. Depending on your choice, only stable versions are displayed or also prereleases are available for flash. The option testing does also provide the stable ones.
+		<ul>
+			<li>stable: only versions marked as stable are available. These releases are provided very infrequently</li>
+			<li>testing: These versions needs some verifications and are provided in shorter intervals</li>
+		</ul>
+		<br>Reload the available Firmware via get availableFirmware manually.
+		</li><br>
+		<a name="whitelist_IDs"></a>
+		<li>whitelist_IDs<br>
+		This attribute allows it, to specify whichs protocos are considured from this module. Protocols which are not considured, will not generate logmessages or events. They are then completly ignored. This makes it possible to lower ressource usage and give some better clearnes in the logs. You can specify multiple whitelistIDs wih a colon : 0,3,7,12<br> With a # at the beginnging whitelistIDs can be deactivated.
+		</li><br>
+   		<a name="WS09_CRCAUS"></a>
+   		<li>WS09_CRCAUS<br>
+       		<ul>
+			<li>0: CRC-Check WH1080 CRC = 0  on, default</li>
+       			<li>2: CRC = 49 (x031) WH1080, set OK</li>
+		</ul>
+    		</li>
+   	</ul>
+							  		   
 =end html
 =begin html_DE
 
@@ -4524,36 +4638,30 @@ With a # at the beginnging whitelistIDs can be deactivated.
 
 	Mit der OpenSource-Firmware (<a href="https://github.com/RFD-FHEM/SIGNALduino">GitHub</a>) ist dieser f&auml;hig zum Empfangen und Senden verschiedener Protokolle auf 433 und 868 Mhz.
 	<br><br>
-	
 	Folgende Ger&auml;te werden zur Zeit unterst&uuml;tzt:
 	<br><br>
-	
 	Funk-Schalter<br>
 	<ul>
-		<li>ITv1 & ITv3/Elro und andere Marken mit dem pt2263-Chip oder welche das arctech Protokoll nutzen --> IT.pm<br>
-				Das ITv1 Protokoll benutzt einen Standard ITclock von 250 und es kann vorkommen, das in dem IT-Modul das Attribut "ITclock" zu setzen ist.</li>
-    <li>ELV FS10 -> 10_FS10</li>
-    <li>ELV FS20 -> 10_FS20</li>
+		<li>ITv1 & ITv3/Elro und andere Marken mit dem pt2263-Chip oder welche das arctech Protokoll nutzen --> IT.pm<br> Das ITv1 Protokoll benutzt einen Standard ITclock von 250 und es kann vorkommen, das in dem IT-Modul das Attribut "ITclock" zu setzen ist.</li>
+    		<li>ELV FS10 -> 10_FS10</li>
+    		<li>ELV FS20 -> 10_FS20</li>
 	</ul>
-	
 	Temperatur-, Luftfeuchtigkeits-, Luftdruck-, Helligkeits-, Regen- und Windsensoren:
 	<ul>
 		<li>PEARL NC7159, LogiLink WS0002,GT-WT-02,AURIOL,TCM97001, TCM27 und viele anderen -> 14_CUL_TCM97001.pm</li>
 		<li>Oregon Scientific v2 und v3 Sensoren  -> 41_OREGON.pm</li>
 		<li>Temperatur / Feuchtigkeits Sensoren unterst&uuml;tzt -> 14_SD_WS07.pm</li>
-    <li>technoline WS 6750 und TX70DTH -> 14_SD_WS07.pm</li>
-    <li>Eurochon EAS 800z -> 14_SD_WS07.pm</li>
-    <li>CTW600, WH1080	-> 14_SD_WS09.pm</li>
-    <li>Hama TS33C, Bresser Thermo/Hygro Sensoren -> 14_Hideki.pm</li>
-    <li>FreeTec Aussenmodul NC-7344 -> 14_SD_WS07.pm</li>
-    <li>La Crosse WS-7035, WS-7053, WS-7054 -> 14_CUL_TX</li>
-    <li>ELV WS-2000, La Crosse WS-7000 -> 14_CUL_WS</li>
+    		<li>technoline WS 6750 und TX70DTH -> 14_SD_WS07.pm</li>
+    		<li>Eurochon EAS 800z -> 14_SD_WS07.pm</li>
+    		<li>CTW600, WH1080	-> 14_SD_WS09.pm</li>
+    		<li>Hama TS33C, Bresser Thermo/Hygro Sensoren -> 14_Hideki.pm</li>
+    		<li>FreeTec Aussenmodul NC-7344 -> 14_SD_WS07.pm</li>
+    		<li>La Crosse WS-7035, WS-7053, WS-7054 -> 14_CUL_TX</li>
+    		<li>ELV WS-2000, La Crosse WS-7000 -> 14_CUL_WS</li>
 	</ul>
 	<br>
-
 	Es ist m&ouml;glich, mehr als ein Ger&auml;t anzuschließen, um beispielsweise besseren Empfang zu erhalten. FHEM wird doppelte Nachrichten herausfiltern.
 	Mehr dazu im dem <a href="#global">global</a> Abschnitt unter dem Attribut dupTimeout<br><br>
-
 	Hinweis: Dieses Modul erfordert das Device::SerialPort oder Win32::SerialPort
 	Modul. Es kann derzeit nur &uuml;ber USB angeschlossen werden.
 	</td>
@@ -4566,101 +4674,102 @@ With a # at the beginnging whitelistIDs can be deactivated.
 	USB-connected devices (SIGNALduino):<br>
 	<ul><li>
 		&lt;device&gt; spezifiziert den seriellen Port f&uuml;r die Kommunikation mit dem SIGNALduino.
-		Der Name des seriellen Ger&auml;ts h&auml;ngt von Ihrer  Distribution ab. In
-		Linux ist das <code>cdc_acm</code> Kernel_Modul daf&uuml;r verantwortlich und es wird ein <code>/dev/ttyACM0</code> oder <code>/dev/ttyUSB0</code> Ger&auml;t angelegt. Wenn deine Distribution kein <code>cdc_acm</code> Module besitzt, kannst du usbserial nutzen um den SIGNALduino zu betreiben mit folgenden Kommandos:
+		Der Name des seriellen Ger&auml;ts h&auml;ngt von Ihrer  Distribution ab. In Linux ist das <code>cdc_acm</code> Kernel_Modul daf&uuml;r verantwortlich und es wird ein <code>/dev/ttyACM0</code> oder <code>/dev/ttyUSB0</code> Ger&auml;t angelegt. Wenn deine Distribution kein <code>cdc_acm</code> Module besitzt, kannst du usbserial nutzen um den SIGNALduino zu betreiben mit folgenden Kommandos:
 		<ul>
-		<li>modprobe usbserial</li>
-		<li>vendor=0x03eb</li>
-		<li>product=0x204b</li>
-		</ul>In diesem Fall ist das Ger&auml;t h&ouml;chstwahrscheinlich
-		<code>/dev/ttyUSB0</code>.<br><br>
+			<li>modprobe usbserial</li>
+			<li>vendor=0x03eb</li>
+			<li>product=0x204b</li>
+		</ul>
+		In diesem Fall ist das Ger&auml;t h&ouml;chstwahrscheinlich <code>/dev/ttyUSB0</code>.<br><br>
 
 		Sie k&ouml;nnen auch eine Baudrate angeben, wenn der Ger&auml;tename das @ enth&auml;lt, Beispiel: <code>/dev/ttyACM0@57600</code><br>Dies ist auch die Standard-Baudrate.<br><br>
-
 		Es wird empfohlen, das Ger&auml;t &uuml;ber einen Namen anzugeben, der sich nicht &auml;ndert. Beispiel via by-id devicename: <code>/dev/serial/by-id/usb-1a86_USB2.0-Serial-if00-port0@57600</code><br>
-
 		Wenn die Baudrate "directio" (Bsp: <code>/dev/ttyACM0@directio</code>), dann benutzt das Perl Modul nicht Device::SerialPort und FHEM &ouml;ffnet das Ger&auml;t mit einem file io. Dies kann funktionieren, wenn das Betriebssystem die Standardwerte f&uuml;r die seriellen Parameter verwendet. Bsp: einige Linux Distributionen und
-		OSX.  <br><br>
+		OSX.<br><br>
 		</li>
 	</ul>
-	
 							  
 	<a name="SIGNALduinoset"></a>
 	<b>SET</b>
 	<ul>
-	<li>cc1101_freq / cc1101_bWidth / cc1101_patable / cc1101_rAmpl / cc1101_sens<br></li>
-	(NUR bei Verwendung eines cc110x Empf&auml;nger)<br><br>
-	Stellt die SIGNALduino-Frequenz / Bandbreite / PA-Tabelle / Empf&auml;nger-Amplitude / Empfindlichkeit ein.<br>
-	Verwenden Sie es mit Vorsicht. Es kann Ihre Hardware zerst&ouml;ren und es kann sogar illegal sein, dies zu tun.<br>
-	Hinweis: Die f&uuml;r die RFR-&Uuml;bertragung verwendeten Parameter sind nicht betroffen.<br>
-			<ul>
-				<a name="cc1101_freq"></a>
-				<li><code>freq</code> , legt sowohl die Empfangsfrequenz als auch die &Uuml;bertragungsfrequenz fest.<br>
-				Hinweis: Obwohl der CC1101 auf Frequenzen zwischen 315 und 915 MHz eingestellt werden kann, ist die Antennenschnittstelle und die Antenne des CUL auf genau eine Frequenz abgestimmt. Standard ist 868,3 MHz (oder 433 MHz)</li>
-				<a name="cc1101_bWidth"></a>
-				<li><code>bWidth</code> , kann auf Werte zwischen 58 kHz und 812 kHz eingestellt werden. Große Werte sind st&ouml;ranf&auml;llig, erm&ouml;glichen jedoch den Empfang von ungenau kalibrierten Sendern. Es wirkt sich auch auf die &Uuml;bertragung aus. Standard ist 325 kHz.</li>
-				<a name="cc1101_patable"></a>
-				<li><code>patable</code> , &Auml;nderung der PA-Tabelle (Leistungsverst&auml;rkung f&uuml;r HF-Senden)</li>
-				<a name="cc1101_rAmpl"></a>
-				<li><code>rAmpl</code> , ist die Empf&auml;ngerverst&auml;rkung mit Werten zwischen 24 und 42 dB. Gr&ouml;ßere Werte erlauben den Empfang schwacher Signale. Der Standardwert ist 42.</li>
-				<a name="cc1101_sens"></a>
-				<li><code>sens</code> , ist die Entscheidungsgrenze zwischen den Ein- und Aus-Werten und betr&auml;gt 4, 8, 12 oder 16 dB. Kleinere Werte erlauben den Empfang von weniger klaren Signalen. Standard ist 4 dB.</li>
-			</ul><br>
-	<a name="close"></a>
-	<li>close<br></li>
-	Beendet die Verbindung zum Ger&auml;t.<br><br>
-	<a name="enableMessagetype"></a>
-	<li>enableMessagetype<br>
+		<li>cc1101_freq / cc1101_bWidth / cc1101_patable / cc1101_rAmpl / cc1101_sens<br></li>
+		(NUR bei Verwendung eines cc110x Funk-Moduls)<br><br>
+		Stellt die SIGNALduino-Frequenz / Bandbreite / PA-Tabelle / Empf&auml;nger-Amplitude / Empfindlichkeit ein.<br>
+		Verwenden Sie es mit Vorsicht. Es kann Ihre Hardware zerst&ouml;ren und es kann sogar illegal sein, dies zu tun.<br>
+		Hinweis: Die f&uuml;r die RFR-&Uuml;bertragung verwendeten Parameter sind nicht betroffen.<br>
+		<ul>
+		<a name="cc1101_freq"></a>
+		<li><code>cc1101_freq</code> , legt sowohl die Empfangsfrequenz als auch die &Uuml;bertragungsfrequenz fest.<br>
+		Hinweis: Obwohl der CC1101 auf Frequenzen zwischen 315 und 915 MHz eingestellt werden kann, ist die Antennenschnittstelle und die Antenne auf genau eine Frequenz abgestimmt. Standard ist 433.920 MHz (oder 868.350 MHz). Wenn keine Frequenz angegeben wird, dann wird die Frequenz aus dem Attribut <code>cc1101_frequency</code> geholt.</li>
+		<a name="cc1101_bWidth"></a>
+		<li><code>cc1101_bWidth</code> , kann auf Werte zwischen 58 kHz und 812 kHz eingestellt werden. Große Werte sind st&ouml;ranf&auml;llig, erm&ouml;glichen jedoch den Empfang von ungenau kalibrierten Sendern. Es wirkt sich auch auf die &Uuml;bertragung aus. Standard ist 325 kHz.</li>
+		<a name="cc1101_patable"></a>
+		<li><code>cc1101_patable</code> , &Auml;nderung der PA-Tabelle (Leistungsverst&auml;rkung f&uuml;r HF-Senden)</li>
+		<a name="cc1101_rAmpl"></a>
+		<li><code>cc1101_rAmpl</code> , ist die Empf&auml;ngerverst&auml;rkung mit Werten zwischen 24 und 42 dB. Gr&ouml;ßere Werte erlauben den Empfang schwacher Signale. Der Standardwert ist 42.</li>
+		<a name="cc1101_sens"></a>
+		<li><code>cc1101_sens</code> , ist die Entscheidungsgrenze zwischen den Ein- und Aus-Werten und betr&auml;gt 4, 8, 12 oder 16 dB. Kleinere Werte erlauben den Empfang von weniger klaren Signalen. Standard ist 4 dB.</li>
+		</ul>
+		</li><br>
+		<a name="close"></a>
+		<li>close<br></li>
+		Beendet die Verbindung zum Ger&auml;t.<br><br>
+		<a name="enableMessagetype"></a>
+		<li>enableMessagetype<br>
 			Erm&ouml;glicht die Aktivierung der Nachrichtenverarbeitung f&uuml;r
 			<ul>
 				<li>Nachrichten mit sync (syncedMS),</li>
-				<li>Nachrichten ohne einen sync pulse (unsyncedMU) </li>
-				<li>Manchester codierte Nachrichten (manchesterMC) </li>
+				<li>Nachrichten ohne einen sync pulse (unsyncedMU)</li>
+				<li>Manchester codierte Nachrichten (manchesterMC)</li>
 			</ul>
 			Der neue Status wird in den eeprom vom Arduino geschrieben.
 		</li><br>
-	<a name="disableMessagetype"></a>
-	<li>disableMessagetype<br>
-			Erm&ouml;glicht das Deaktivieren der Nachrichtenverarbeitung f&uuml;r
-			<ul>
-				<li>Nachrichten mit sync (syncedMS)</li>
-				<li>Nachrichten ohne einen sync pulse (unsyncedMU)</li> 
-				<li>Manchester codierte Nachrichten (manchesterMC) </li>
-			</ul>
-			Der neue Status wird in den eeprom vom Arduino geschrieben.
+		<a name="disableMessagetype"></a>
+		<li>disableMessagetype<br>
+		Erm&ouml;glicht das Deaktivieren der Nachrichtenverarbeitung f&uuml;r
+		<ul>
+			<li>Nachrichten mit sync (syncedMS)</li>
+			<li>Nachrichten ohne einen sync pulse (unsyncedMU)</li> 
+			<li>Manchester codierte Nachrichten (manchesterMC)</li>
+		</ul>
+		Der neue Status wird in den eeprom vom Arduino geschrieben.
 		</li><br>
-	<a name="flash"></a>
-	<li>flash [hexFile|url]<br>
-	Der SIGNALduino ben&ouml;tigt die richtige Firmware, um die Sensordaten zu empfangen und zu liefern. Unter Verwendung der Arduino IDE zum Flashen der Firmware in den SIGNALduino bietet dies eine M&ouml;glichkeit, ihn direkt von FHEM aus zu flashen. Sie k&ouml;nnen eine Datei auf Ihrem fhem-Server angeben oder eine URL angeben, von der die Firmware heruntergeladen wird.
-	Es gibt einige Anforderungen:
+		<a name="flash"></a>
+		<li>flash [hexFile|url]<br>
+		Der SIGNALduino ben&ouml;tigt die richtige Firmware, um die Sensordaten zu empfangen und zu liefern. Unter Verwendung der Arduino IDE zum Flashen der Firmware in den SIGNALduino bietet dies eine M&ouml;glichkeit, ihn direkt von FHEM aus zu flashen. Sie k&ouml;nnen eine Datei auf Ihrem fhem-Server angeben oder eine URL angeben, von der die Firmware heruntergeladen wird. Es gibt einige Anforderungen:
+		<ul>
+			<li><code>avrdude</code> muss auf dem Host installiert sein. Auf einem Raspberry PI kann dies getan werden mit: <code>sudo apt-get install avrdude</code></li>
+			<li>Das Hardware-Attribut muss festgelegt werden, wenn eine andere Hardware als Arduino Nano verwendet wird. Dieses Attribut definiert den Befehl, der an avrdude gesendet wird, um den uC zu flashen.</li>
+		</ul>
+		Beispiele:
+		<ul>
+			<li>flash via hexFile: <code>set sduino flash ./FHEM/firmware/SIGNALduino_mega2560.hex</code></li>
+			<li>flash via url f&uuml;r einen Nano mit CC1101: <code>set sduino flash https://github.com/RFD-FHEM/SIGNALDuino/releases/download/3.3.1-RC7/SIGNALDuino_nanocc1101.hex</code></li>
+		</ul>
+		<i><u>Hinweise Modell radino:</u></i>
+		<ul>
+			<li>Teilweise kann es beim flashen vom radino unter Linux Probleme geben. <a href="https://wiki.in-circuit.de/index.php5?title=radino_common_problems">Hier im Wiki unter dem Punkt "radino & Linux" gibt es einen Patch!</a></li>
+			<li>Um den Bootloader vom radino zu aktivieren gibt es 2 Varianten.
 			<ul>
-				<li><code>avrdude</code> muss auf dem Host installiert sein. Auf einem Raspberry PI kann dies getan werden mit: <code>sudo apt-get install avrdude</code></li>
-				<li>Das Hardware-Attribut muss festgelegt werden, wenn eine andere Hardware als Arduino Nano verwendet wird. Dieses Attribut definiert den Befehl, der an avrdude gesendet wird, um den uC zu flashen.</li>
+				<li>1) Module welche einen BSL-Button besitzen:
+				<ul>
+					<li>Spannung anlegen</li>
+					<li>druecke & halte BSL- und RESET-Button</li>
+					<li>RESET-Button loslassen und danach den BSL-Button loslassen</li>
+					<li>(Wiederholen Sie diese Schritte, wenn Ihr radino nicht sofort in den Bootloader-Modus wechselt.)</li>
+				</ul>
+				</li>
+				<li>2) Bootloader erzwingen:
+				<ul>
+					<li>durch zweimaliges druecken der Reset-Taste</li>
+				</ul>
+				</li>
 			</ul>
-	Beispiele:
-	<ul>
-	<li>flash via hexFile: <code>set sduino flash ./FHEM/firmware/SIGNALduino_mega2560.hex</code></li>
-	<li>flash via url f&uuml;r einen Nano mit CC1101: <code>set sduino flash https://github.com/RFD-FHEM/SIGNALDuino/releases/download/3.3.1-RC7/SIGNALDuino_nanocc1101.hex</code></li>
-	</ul>
-	</li>
-	<i><u>Hinweise Modell radino:</u></i><ul>
-		<li>Teilweise kann es beim flashen vom radino unter Linux Probleme geben. <a href="https://wiki.in-circuit.de/index.php5?title=radino_common_problems">Hier im Wiki unter dem Punkt "radino & Linux" gibt es einen Patch!</a></li>
-		<li>Um den Bootloader vom radino zu aktivieren gibt es 2 Varianten.
-		<ul><li>1) Module welche einen BSL-Button besitzen:</li>
-			<ul>
-			- Spannung anlegen<br>
-			- drücke & halte BSL- und RESET-Button<br>
-			- RESET-Button loslassen und danach den BSL-Button loslassen<br>
-			 (Wiederholen Sie diese Schritte, wenn Ihr radino nicht sofort in den Bootloader-Modus wechselt.)
-			</ul>
-			<li>2) Bootloader erzwingen:<ul>
-			- durch zweimaliges drücken der Reset-Taste</ul>
+			<li>Im Bootloader-Modus erh&auml;lt der radino eine andere USB ID.</li><br>
+			<b>Wenn der Bootloader aktiviert ist, signalisiert er das mit dem Blinken einer LED. Dann hat man ca. 8 Sekunden Zeit zum flashen.</b>
 			</li>
 		</ul>
-		<li>Im Bootloader-Modus erh&auml;lt der radino eine andere USB ID.</li><br>
-		<b>Wenn der Bootloader aktiviert ist, signalisiert er das mit dem Blinken einer LED. Dann hat man ca. 8 Sekunden Zeit zum flashen.</b>
-		</li>
-	</ul><br>
+		</li><br>
 	<a name="raw"></a>
 	<li>raw<br></li>
 	Geben Sie einen SIGNALduino-Firmware-Befehl aus, ohne auf die vom SIGNALduino zur&uuml;ckgegebenen Daten zu warten. Ausf&uuml;hrliche Informationen zu SIGNALduino-Befehlen finden Sie im SIGNALduino-Firmware-Code. Mit dieser Linie k&ouml;nnen Sie fast jedes Signal &uuml;ber einen angeschlossenen Sender senden.<br>
@@ -4671,7 +4780,7 @@ With a # at the beginnging whitelistIDs can be deactivated.
 				<li>Beispiel 3: <code>set sduino raw SC;R=3;SR;P0=5000;SM;P0=500;C=250;D=A4F7FDDE</code> , sendet eine kombinierte Nachricht von Raw und Manchester codiert 3 mal wiederholt</li>
 			</ul><br>
 		<ul>
-         <u>NUR für DEBUG Nutzung | <small>Befehle sind abhänging vom Firmwarestand!</small></u><br>
+         <u>NUR f&uuml;r DEBUG Nutzung | <small>Befehle sind abhaenging vom Firmwarestand!</small></u><br>
          <small>(Hinweis: Die falsche Benutzung kann zu Fehlfunktionen des SIGNALduino´s f&uuml;hren!)</small>
             <li>CED -> Debugausgaben ein</li>
             <li>CDD -> Debugausgaben aus</li>
@@ -4679,10 +4788,10 @@ With a # at the beginnging whitelistIDs can be deactivated.
             <li>CEL -> LED ein</li>
             <li>CER -> Einschalten der Datenkomprimierung (config: Mred=1)</li>
             <li>CDR -> Abschalten der Datenkomprimierung (config: Mred=0)</li>
-            <li>CSmscnt=[Wert] -> Wiederholungszähler für den split von MS Nachrichten</li>
-            <li>CSmuthresh=[Wert] -> Schwellwert für den split von MU Nachrichten (0=aus)</li>
-            <li>CSmcmbl=[Wert] -> minbitlen für MC-Nachrichten</li>
-            <li>CSfifolimit=[Wert] -> Schwellwert für debug Ausgabe der Pulsanzahl im FIFO Puffer</li>
+            <li>CSmscnt=[Wert] -> Wiederholungszaehler fuer den split von MS Nachrichten</li>
+            <li>CSmuthresh=[Wert] -> Schwellwert fuer den split von MU Nachrichten (0=aus)</li>
+            <li>CSmcmbl=[Wert] -> minbitlen fuer MC-Nachrichten</li>
+            <li>CSfifolimit=[Wert] -> Schwellwert fuer debug Ausgabe der Pulsanzahl im FIFO Puffer</li>
          </ul><br>
 	<a name="reset"></a>
 	<li>reset<br></li>
@@ -4690,62 +4799,82 @@ With a # at the beginnging whitelistIDs can be deactivated.
 	<a name="sendMsg"></a>
 	<li>sendMsg</li>
 	Dieser Befehl erstellt die erforderlichen Anweisungen zum Senden von Rohdaten &uuml;ber den SIGNALduino. Sie k&ouml;nnen die Signaldaten wie Protokoll und die Bits angeben, die Sie senden m&ouml;chten.<br>
-	Alternativ ist es auch möglich, die zu sendenden Daten in hexadezimaler Form zu übergeben. Dazu muss ein 0x vor den Datenteil geschrieben werden.
+	Alternativ ist es auch moeglich, die zu sendenden Daten in hexadezimaler Form zu uebergeben. Dazu muss ein 0x vor den Datenteil geschrieben werden.
 	<br><br>
-	Bitte beachte, dieses Kommando funktioniert nur für MU oder MS Protokolle nach dieser Vorgehensweise:
+	Bitte beachte, dieses Kommando funktioniert nur fuer MU oder MS Protokolle nach dieser Vorgehensweise:
 		<br><br>
 		Argumente sind:
 		<p>
 		<ul><li>P<protocol id>#binarydata#R<anzahl der wiederholungen>#C<optional taktrate>   (#C is optional) 
 		<br>Beispiel binarydata: <code>set sduino sendMsg P0#0101#R3#C500</code>
-		<br>Wird eine sende Kommando für die Bitfolge 0101 anhand der protocol id 0 erzeugen. Als Takt wird 500 verwendet.
+		<br>Wird eine sende Kommando fuer die Bitfolge 0101 anhand der protocol id 0 erzeugen. Als Takt wird 500 verwendet.
 		<br>SR;R=3;P0=500;P1=-9000;P2=-4000;P3=-2000;D=03020302;<br></li></ul><br>
 		<ul><li>P<protocol id>#0xhexdata#R<anzahl der wiederholungen>#C<optional taktrate>    (#C is optional) 
 		<br>Beispiel 0xhexdata: <code>set sduino sendMsg P29#0xF7E#R4</code>
-		<br>Wird eine sende Kommando für die Hexfolge F7E anhand der protocol id 29 erzeugen. Die Nachricht soll 4x gesenset werden.
+		<br>Wird eine sende Kommando fuer die Hexfolge F7E anhand der protocol id 29 erzeugen. Die Nachricht soll 4x gesenset werden.
 		<br>SR;R=4;P0=-8360;P1=220;P2=-440;P3=-220;P4=440;D=01212121213421212121212134;
 		</p></li></ul>
 	</ul><br>
 	</ul>
 	
-	
 	<a name="SIGNALduinoget"></a>
 	<b>Get</b>
 	<ul>
+    	<a name="availableFirmware"></a>
+    	<li>availableFirmware<br>
+	Ruft die verf&uuml;gbaren Firmware-Versionen von Github ab und macht diese im <code>set flash</code> Befehl ausw&auml;hlbar.
+	</li><br>
 	<a name="ccconf"></a>
-	<li>ccconf<br></li>
-   Liest s&auml;mtliche radio-chip (cc1101) Register (Frequenz, Bandbreite, etc.) aus und zeigt die aktuelle Konfiguration an.<br>
-   (NUR bei Verwendung eines cc1101 Empf&auml;nger)<br><br>
+	<li>ccconf<br>
+   	Liest s&auml;mtliche radio-chip (cc1101) Register (Frequenz, Bandbreite, etc.) aus und zeigt die aktuelle Konfiguration an.<br>
+	(NUR bei Verwendung eines cc1101 Empf&auml;nger)
+   	</li><br>
 	<a name="ccpatable"></a>
-	<li>ccpatable<br></li>
-   Liest die cc1101 PA Tabelle aus (power amplification for RF sending).<br><br>
+	<li>ccpatable<br>
+   	Liest die cc1101 PA Tabelle aus (power amplification for RF sending).<br>
+	(NUR bei Verwendung eines cc1101 Empf&auml;nger)
+   	</li><br>
 	<a name="ccreg"></a>
-	<li>ccreg<br></li>
-   Liest das cc1101 Register aus (99 reads all cc1101 registers).<br><br>
+	<li>ccreg<br>
+   	Liest das cc1101 Register aus (99 liest alle aus).<br>
+	(NUR bei Verwendung eines cc1101 Empf&auml;nger)
+	</li><br>
+	<a name="close"></a>
+	<li>close<br>
+	Beendet die Verbindung zum SIGNALduino.
+	</li><br>
 	<a name="cmds"></a>
-	<li>cmds<br></li>
-	Abh&auml;ngig von der installierten Firmware besitzt der SIGNALduino verschiedene Befehle. Bitte beachten Sie den Quellcode der Firmware Ihres SIGNALduino, um die Antwort dieses Befehls zu interpretieren.<br><br>
+	<li>cmds<br>
+	Abh&auml;ngig von der installierten Firmware besitzt der SIGNALduino verschiedene Befehle. Bitte beachten Sie den Quellcode der Firmware Ihres SIGNALduino, um die Antwort dieses Befehls zu interpretieren.
+	</li><br>
 	<a name="config"></a>
-	<li>config<br></li>
-	Zeigt Ihnen die aktuelle Konfiguration der SIGNALduino Protokollkathegorie an. | Bsp: <code>MS=1;MU=1;MC=1;Mred=0</code><br><br>
+	<li>config<br>
+	Zeigt Ihnen die aktuelle Konfiguration der SIGNALduino Protokollkathegorie an. | Bsp: <code>MS=1;MU=1;MC=1;Mred=0</code>
+	</li><br>
 	<a name="freeram"></a>
-	<li>freeram<br></li>
-   Zeigt den freien RAM an.<br><br>
+	<li>freeram<br>
+   	Zeigt den freien RAM an.
+	</li><br>
 	<a name="ping"></a>
-   <li>ping<br></li>
-	Pr&uuml;ft die Kommunikation mit dem SIGNALduino.<br><br>
+   	<li>ping<br>
+	Pr&uuml;ft die Kommunikation mit dem SIGNALduino.
+	</li><br>
 	<a name="protocolIDs"></a>
-	<li>protocolIDs<br></li>
-	Zeigt Ihnen die aktuell implementierten Protokolle des SIGNALduino an und an welches FHEM Modul Sie &uuml;bergeben werden.<br><br>
+	<li>protocolIDs<br>
+	Zeigt Ihnen die aktuell implementierten Protokolle des SIGNALduino an und an welches FHEM Modul Sie &uuml;bergeben werden.
+	</li><br>
 	<a name="raw"></a>
-	<li>raw<br></li>
-	Abh&auml;ngig von der installierten Firmware! Somit k&ouml;nnen Sie einen SIGNALduino-Firmware-Befehl direkt ausf&uuml;hren.<br><br>
+	<li>raw<br>
+	Abh&auml;ngig von der installierten Firmware! Somit k&ouml;nnen Sie einen SIGNALduino-Firmware-Befehl direkt ausf&uuml;hren.
+	</li><br>
 	<a name="uptime"></a>
-	<li>uptime<br></li>
-	Zeigt Ihnen die Information an, wie lange der SIGNALduino l&auml;uft. Ein FHEM Neustart setzt den Timer zur&uuml;ck.<br><br>
+	<li>uptime<br>
+	Zeigt Ihnen die Information an, wie lange der SIGNALduino l&auml;uft. Ein FHEM Neustart setzt den Timer zur&uuml;ck.
+	</li><br>
 	<a name="version"></a>
-	<li>version<br></li>
-	Zeigt Ihnen die Information an, welche aktuell genutzte Software Sie mit dem SIGNALduino verwenden.<br><br>
+	<li>version<br>
+	Zeigt Ihnen die Information an, welche aktuell genutzte Software Sie mit dem SIGNALduino verwenden.
+	</li><br>
 	</ul>
 	
 	
@@ -4753,105 +4882,132 @@ With a # at the beginnging whitelistIDs can be deactivated.
 	<b>Attributes</b>
 	<ul>
 	<a name="addvaltrigger"></a>
-	<li>addvaltrigger<br></li>
-	Generiert Trigger f&uuml;r zus&auml;tzliche Werte. Momentan werden DMSG , RAWMSG und RSSI unterst&uuml;zt.<br><br>
-	<li><a href="#dummy">dummy</a><br><br></li>
+	<li>addvaltrigger<br>
+	Generiert Trigger f&uuml;r zus&auml;tzliche Werte. Momentan werden DMSG , RAWMSG und RSSI unterst&uuml;zt.
+	</li><br>
 	<a name="blacklist_IDs"></a>
-	<li>blacklist_IDs<br></li>
-	Dies ist eine durch Komma getrennte Liste. Die Blacklist funktioniert nur, wenn keine Whitelist existiert! Hier kann man ID´s eintragen welche man nicht ausgewertet haben m&ouml;chte.<br><br>
+	<li>blacklist_IDs<br>
+	Dies ist eine durch Komma getrennte Liste. Die Blacklist funktioniert nur, wenn keine Whitelist existiert! Hier kann man ID´s eintragen welche man nicht ausgewertet haben m&ouml;chte.
+	</li><br>
 	<a name="cc1101_frequency"></a>
-	<li>cc1101_frequency<br></li>
-	Frequenzeinstellung des cc1101. | Bsp: 433.920Mhz / 868.350Mhz<br><br>
+	<li>cc1101_frequency<br>
+	Frequenzeinstellung des cc1101. | Bsp: 433.920 / 868.350
+	</li><br>
 	<a name="debug"></a>
 	<li>debug<br>
-	Dies bringt das Modul in eine sehr ausf&uuml;hrliche Debug-Ausgabe im Logfile. Somit lassen sich neue Signale finden und Signale &uuml;berpr&uuml;fen, ob die Demodulation korrekt funktioniert.</li><br>
+	Dies bringt das Modul in eine sehr ausf&uuml;hrliche Debug-Ausgabe im Logfile. Somit lassen sich neue Signale finden und Signale &uuml;berpr&uuml;fen, ob die Demodulation korrekt funktioniert.
+	</li><br>
 	<a name="development"></a>
 	<li>development<br>
 	Mit development k&ouml;nnen Sie die Protokolldekodierung f&uuml;r Protokolle aktivieren, die sich noch in der Entwicklung befinden und m&ouml;glicherweise nicht sehr genau implementiert sind.
 	Dies kann zu Abst&uuml;rzen oder zu einer hohen Anzahl an Log-Eintr&auml;gen in Ihrer Logdatei f&uuml;hren. Protokolle, die mit einem developmentID-Flag gekennzeichnet sind, werden nicht geladen, sofern dies nicht angegeben ist.<br>
-	<ul><li>Wenn das Flag developId => 'm' in der Protokolldefinition gesetzt ist, befindet sich das logische Modul in der Entwicklung.
-	Wenn Sie es aktivieren wollen, so geben Sie "m" gefolgt von der Protokoll-ID an.</li>
-	<li>Wenn das Flag developId => 'p' in der Protokolldefinition gesetzt ist, wurde die ID reserviert.</li>
-	<li>Wenn das Flag developId => 'y' in der Protokolldefinition gesetzt ist, befindet sich das Protokoll noch in der Entwicklung.
-	Wenn Sie es aktivieren wollen, so geben Sie "y" gefolgt von der Protokoll-ID an.</li></a></li></ul><br>
+		<ul>
+			<li>Wenn das Flag developId => 'm' in der Protokolldefinition gesetzt ist, befindet sich das logische Modul in der Entwicklung. Wenn Sie es aktivieren wollen, so geben Sie "m" gefolgt von der Protokoll-ID an.</li>
+			<li>Wenn das Flag developId => 'p' in der Protokolldefinition gesetzt ist, wurde die ID reserviert.</li>
+			<li>Wenn das Flag developId => 'y' in der Protokolldefinition gesetzt ist, befindet sich das Protokoll noch in der Entwicklung. Wenn Sie es aktivieren wollen, so geben Sie "y" gefolgt von der Protokoll-ID an.</li>
+		</ul>
+	</li><br>
 	<li><a href="#do_not_notify">do_not_notify</a></li><br>
 	<a name="doubleMsgCheck_IDs"></a>
-	<li>doubleMsgCheck_IDs<br></li>
-	Dieses Attribut erlaubt es, Protokolle anzugeben, die zwei gleiche Nachrichten enthalten m&uuml;ssen, um diese an die Module zu &uuml;bergeben. Sie k&ouml;nnen mehrere IDs mit einem Komma angeben: 0,3,7,12<br><br>
+	<li>doubleMsgCheck_IDs<br>
+	Dieses Attribut erlaubt es, Protokolle anzugeben, die zwei gleiche Nachrichten enthalten m&uuml;ssen, um diese an die Module zu &uuml;bergeben. Sie k&ouml;nnen mehrere IDs mit einem Komma angeben: 0,3,7,12
+	</li><br>
+	<li><a href="#dummy">dummy</a></li><br>
 	<a name="flashCommand"></a>
 	<li>flashCommand<br>
 	Dies ist der Befehl, der ausgef&uuml;hrt wird, um den Firmware-Flash auszuf&uuml;hren. Nutzen Sie dies nicht, wenn Sie nicht wissen, was Sie tun!<br>
-	Wurde das Attribut nicht definiert, so verwendet es die Standardeinstellungen. <b>Sobald der User das Attribut manuell definiert, nutzt das System die Vorgaben!</b><br>
+	Wurde das Attribut nicht definiert, so verwendet es die Standardeinstellungen.<br><b>Sobald der User das Attribut manuell definiert, nutzt das System diese Vorgaben!</b><br>
 	<ul>
-	<li>Standard nano, nanoCC1101, miniculCC1101, promini: <code>avrdude -c arduino -b [BAUDRATE] -P [PORT] -p atmega328p -vv -U flash:w:[HEXFILE] 2>[LOGFILE]</code></li>
-	<li>Standard radinoCC1101: <code>avrdude -c avr109 -b [BAUDRATE] -P [PORT] -p atmega32u4 -vv -D -U flash:w:[HEXFILE] 2>[LOGFILE]</code></li>
+	<li>Standard nano, nanoCC1101, miniculCC1101, promini:<br><code>avrdude -c arduino -b [BAUDRATE] -P [PORT] -p atmega328p -vv -U flash:w:[HEXFILE] 2>[LOGFILE]</code></li>
+	<li>Standard radinoCC1101:<br><code>avrdude -c avr109 -b [BAUDRATE] -P [PORT] -p atmega32u4 -vv -D -U flash:w:[HEXFILE] 2>[LOGFILE]</code></li>
 	</ul>
 	Es enth&auml;lt einige Platzhalter, die automatisch mit den entsprechenden Werten gef&uuml;llt werden:
 		<ul>
 			<li>[BAUDRATE]<br>
 			Ist die Schrittgeschwindigkeit. (z.Bsp: 57600)</li>
 			<li>[PORT]<br>
-			Ist der Port, an den der SIGNALduino angeschlossen ist (z.Bsp: /dev/ttyUSB0) und wird von der Defenition verwendet.</li>
+			Ist der Port, an dem der SIGNALduino angeschlossen ist (z.Bsp: /dev/ttyUSB0) und wird von der Definition verwendet.</li>
 			<li>[HEXFILE]<br>
 			Ist die .hex-Datei, die geflasht werden soll. Es gibt drei Optionen (angewendet in dieser Reihenfolge):<br>
-			&nbsp;&nbsp;- in <code>set SIGNALduino flash</code> als erstes Argument &uuml;bergeben<br>
-			&nbsp;&nbsp;- aus dem Hardware-Attribut genommen<br>
-			&nbsp;&nbsp;- der im Modul definierte Standardwert<br>
+			<ul>
+				<li>in <code>set SIGNALduino flash</code> als erstes Argument &uuml;bergeben</li>
+				<li>aus dem Hardware-Attribut genommen</li>
+				<li>der im Modul definierte Standardwert</li>
+			</ul>
 			</li>
 			<li>[LOGFILE]<br>
 			Die Logdatei, die Informationen &uuml;ber den Flash-Prozess sammelt. Es wird nach Abschluss des Flash-Prozesses in FHEM angezeigt</li>
 		</ul><br>
-	<u><i>Hinweis:</u></i> ! Teilweise kann es beim flashen vom radino unter Linux Probleme geben. <a href="https://wiki.in-circuit.de/index.php5?title=radino_common_problems">Hier im Wiki unter dem Punkt "radino & Linux" gibt es einen Patch!</a>
+	<u><i>Hinweis:</u></i> ! Teilweise kann es beim Flashen vom radino unter Linux Probleme geben. <a href="https://wiki.in-circuit.de/index.php5?title=radino_common_problems">Hier im Wiki unter dem Punkt "radino & Linux" gibt es einen Patch!</a>
 	</li><br>
 	<a name="hardware"></a>
 	<li>hardware<br>
 		Derzeit m&ouml;gliche Hardware Varianten:
 		<ul>
-			<li>ESP_1MCC1101: ESP8266 mit 1 MB Flash und einem CC1101</li>
-			<li>ESP32: ESP32 </li>
-			<li>nano328: Arduino Nano f&uuml;r "Billig"-Empf&auml;nger</li>
+			<li>ESP_1M: ESP8266 mit 1 MB Flash und einem CC1101</li>
+			<li>ESP32: ESP32</li>
+			<li>nano: Arduino Nano 328 f&uuml;r "Billig"-Empf&auml;nger</li>
 			<li>nanoCC1101: Arduino Nano f&uuml;r einen CC110x-Empf&auml;nger</li>
 			<li>miniculCC1101: Arduino pro Mini mit einen CC110x-Empf&auml;nger entsprechend dem minicul verkabelt</li>
-			<li>promini328: Arduino Pro Mini f&uuml;r "Billig"-Empf&auml;nger</li>
+			<li>promini: Arduino Pro Mini 328 f&uuml;r "Billig"-Empf&auml;nger</li>
 			<li>radinoCC1101: Ein Arduino Kompatibler Radino mit cc1101 receiver</li>
 		</ul><br>
-		Notwendig f&uuml;r den Befehl <code>flash</code>. Hier sollten Sie angeben, welche Hardware Sie mit dem usbport verbunden haben. Andernfalls kann es zu Fehlfunktionen des Ger&auml;ts kommen.<br>
+		Notwendig f&uuml;r den Befehl <code>flash</code>. Hier sollten Sie angeben, welche Hardware Sie mit dem USB-Port verbunden haben. Andernfalls kann es zu Fehlfunktionen des Ger&auml;ts kommen.<br>
 	</li><br>
 	<a name="longids"></a>
-	<li>longids<br></li>
-	Durch Komma getrennte Liste von Device-Typen f&uuml;r Empfang von langen IDs mit dem SIGNALduino. Diese zus&auml;tzliche ID erlaubt es Wettersensoren, welche auf dem gleichen Kanal senden zu unterscheiden. Hierzu wird eine zuf&auml;llig generierte ID hinzugef&uuml;gt. Wenn Sie longids verwenden, dann wird in den meisten F&auml;llen nach einem Batteriewechsel ein neuer Sensor angelegt. Standardm&auml;ßig werden keine langen IDs verwendet.
+	<li>longids<br>
+	Durch Komma getrennte Liste von Device-Typen f&uuml;r Empfang von langen IDs mit dem SIGNALduino. Diese zus&auml;tzliche ID erlaubt es Wettersensoren, welche auf dem gleichen Kanal senden zu unterscheiden. Hierzu wird eine zuf&auml;llig generierte ID hinzugef&uuml;gt. Wenn Sie longids verwenden, dann wird in den meisten F&auml;llen nach einem Batteriewechsel ein neuer Sensor angelegt. Standardm&auml;ßig werden keine langen IDs verwendet.<br>
 	Folgende Module verwenden diese Funktionalit&auml;t: 14_Hideki, 41_OREGON, 14_CUL_TCM97001, 14_SD_WS07.<br>
-	Beispiele:<br>
-	<br>
-    # Keine langen IDs verwenden (Default Einstellung):<br>
-    attr SIGNALduino longids 0<br>
-    # Immer lange IDs verwenden:<br>
-    attr SIGNALduino longids 1<br>
-    # Verwende lange IDs f&uuml;r SD_WS07 Devices.<br>
-    # Device Namen sehen z.B. so aus: SD_WS07_TH_3 for channel 3.<br>
-    attr SIGNALduino longids SD_WS07<br><br>
+	Beispiele:<PRE>
+    		# Keine langen IDs verwenden (Default Einstellung):
+    		attr sduino longids 0
+    		# Immer lange IDs verwenden:
+    		attr sduino longids 1
+    		# Verwende lange IDs f&uuml;r SD_WS07 Devices.
+    		# Device Namen sehen z.B. so aus: SD_WS07_TH_3.
+    		attr sduino longids SD_WS07
+	</PRE></li><br>
+	<a name="maxMuMsgRepeat"></a>
+	<li>maxMuMsgRepeat<br>
+	In MU Signalen k&ouml;nnen mehrere Wiederholungen stecken. Diese werden einzeln ausgewertet und an ein logisches Modul uebergeben. Mit diesem Attribut kann angepasst werden, wie viele Wiederholungen gesucht werden. Standard ist 4.
+	</li><br>
 	<a name="minsecs"></a>
-	<li>minsecs<br></li>
-	Es wird von anderen Modulen bereitgestellt. Minsecs sollte wie eine Schwelle wirken. Wenn angegeben, werden unterst&uuml;tzte Module neue Nachrichten verworfen, wenn minsecs nicht vergangen sind.<br><br>
+	<li>minsecs<br>
+	Es wird von anderen Modulen bereitgestellt. Minsecs sollte wie eine Schwelle wirken. Wenn angegeben, werden unterst&uuml;tzte Module neue Nachrichten verworfen, wenn minsecs nicht vergangen sind.
+	</li><br>
 	<a name="noMsgVerbose"></a>
-	<li>noMsgVerbose<br></li>
-	Mit diesem Attribut k&ouml;nnen Sie die Protokollierung von Debug-Nachrichten vom io-Ger&auml;t steuern. Wenn dieser Wert auf 3 festgelegt ist, werden diese Nachrichten protokolliert, wenn der globale Verbose auf 3 oder h&ouml;her eingestellt ist.<br><br>
+	<li>noMsgVerbose<br>
+	Mit diesem Attribut k&ouml;nnen Sie die Protokollierung von Debug-Nachrichten vom io-Ger&auml;t steuern. Wenn dieser Wert auf 3 festgelegt ist, werden diese Nachrichten protokolliert, wenn der globale Verbose auf 3 oder h&ouml;her eingestellt ist.
+	</li><br>
 	<a name="eventlogging"></a>
 	<li>eventlogging<br>
-Mit diesem Attribut können Sie steuern, ob jede Logmeldung auch als Ereignis bereitgestellt wird. Dies ermöglicht das Erzeugen eines Ereignisses für jede Protokollnachricht.
-    Setze dies auf 0 und Logmeldungen werden nur in der globalen Fhem-Logdatei gespeichert, wenn der Loglevel höher oder gleich dem Verbose-Attribut ist.
-    Setze dies auf 1 und jede Logmeldung wird auch als Ereignis versendet. Dadurch können Sie die Ereignisse in einer separaten Protokolldatei protokollieren.<br><br>
-    </li>
+    	Mit diesem Attribut k&ouml;nnen Sie steuern, ob jede Logmeldung auch als Ereignis bereitgestellt wird. Dies erm&ouml;glicht das Erzeugen eines Ereignisses fuer jede Protokollnachricht.
+    	Setze dies auf 0 und Logmeldungen werden nur in der globalen Fhem-Logdatei gespeichert, wenn der Loglevel h&ouml;her oder gleich dem Verbose-Attribut ist.
+    	Setze dies auf 1 und jede Logmeldung wird auch als Ereignis versendet. Dadurch k&ouml;nnen Sie die Ereignisse in einer separaten Protokolldatei protokollieren.
+    	</li><br>
 	<a name="rawmsgEvent"></a>
-	<li>rawmsgEvent<br></li>
-	Bei der Einstellung "1", l&ouml;sen empfangene Rohnachrichten Ereignisse aus.<br><br>
+	<li>rawmsgEvent<br>
+	Bei der Einstellung "1", l&ouml;sen empfangene Rohnachrichten Ereignisse aus.
+	</li><br>
 	<a name="suppressDeviceRawmsg"></a>
-	<li>suppressDeviceRawmsg</li>
-	Bei der Einstellung "1" wird das interne "RAWMSG" nicht mit den empfangenen Nachrichten aktualisiert.<br><br>
+	<li>suppressDeviceRawmsg<br>
+	Bei der Einstellung "1" wird das interne "RAWMSG" nicht mit den empfangenen Nachrichten aktualisiert.
+	</li><br>
+	<a name="updateChannelFW"></a>
+	<li>updateChannelFW<br>
+		Das Modul sucht nach Verf&uml;gbaren Firmware Vesionen und bietet diesen zum Flashen an. Mit dem Attribut kann festgelegt werden ob nur stabile Versionen angezeigt werden oder auch vorabversionen einer neuen Firmware.<br>
+		Die Option testing inkludiert auch die stabilen Versionen.
+		<ul>
+			<li>stable: Als stabil getestete Versionen, erscheint nur sehr selten</li>
+			<li>testing: Neue Versionen, welche noch getestet werden muss</li>
+		</ul>
+		<br>Die Liste der verfügbaren Versionen muss mittels get availableFirmware manuell neu geladen werden.	
+	</li><br>
+	Notwendig f&uuml;r den Befehl <code>flash</code>. Hier sollten Sie angeben, welche Hardware Sie mit dem usbport verbunden haben. Andernfalls kann es zu Fehlfunktionen des Ger&auml;ts kommen. <br><br>
 	<a name="whitelist_IDs"></a>
-	<li>whitelist_IDs<br></li>
-	Dieses Attribut erlaubt es, festzulegen, welche Protokolle von diesem Modul aus verwendet werden. Protokolle, die nicht beachtet werden, erzeugen keine Logmeldungen oder Ereignisse. Sie werden dann vollst&auml;ndig ignoriert.
-	Dies erm&ouml;glicht es, die Ressourcennutzung zu reduzieren und bessere Klarheit in den Protokollen zu erzielen. Sie k&ouml;nnen mehrere WhitelistIDs mit einem Komma angeben: 0,3,7,12. Mit einer # am Anfang k&ouml;nnen WhitelistIDs deaktiviert werden. <br><br>
+	<li>whitelist_IDs<br>
+	Dieses Attribut erlaubt es, festzulegen, welche Protokolle von diesem Modul aus verwendet werden. Protokolle, die nicht beachtet werden, erzeugen keine Logmeldungen oder Ereignisse. Sie werden dann vollst&auml;ndig ignoriert. Dies erm&ouml;glicht es, die Ressourcennutzung zu reduzieren und bessere Klarheit in den Protokollen zu erzielen. Sie k&ouml;nnen mehrere WhitelistIDs mit einem Komma angeben: 0,3,7,12. Mit einer # am Anfang k&ouml;nnen WhitelistIDs deaktiviert werden. 
+	</li><br>
 	<a name="WS09_CRCAUS"></a>
 	<li>WS09_CRCAUS<br>
 		<ul>
